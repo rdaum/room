@@ -230,20 +230,29 @@ pub enum VerbGetError {
     Internal,
 }
 
-pub struct ObjectDB {}
+// Performs operations on objects via one transaction.
+pub struct ObjDBTxHandle<'tx_lifetime> {
+    tr: &'tx_lifetime FdbTransaction,
+}
 
-impl ObjectDB {
-    pub fn put(tr: &FdbTransaction, oid: Oid, obj: &Object) -> () {
-        let mut oid_tup = Tuple::new();
-        oid_tup.add_uuid(oid.id);
-
-        tr.set(oid_tup.pack(), obj.to_tuple().pack())
+// TODO this should be refactored to use a trait. except traits can't have async functions right
+// now.
+impl<'tx_lifetime> ObjDBTxHandle<'tx_lifetime> {
+    pub fn new(tx: &'tx_lifetime FdbTransaction) -> ObjDBTxHandle<'tx_lifetime> {
+        ObjDBTxHandle { tr: tx }
     }
 
-    pub async fn get(tr: &FdbTransaction, oid: Oid) -> Result<Object, ObjGetError> {
+    pub fn put(&self, oid: Oid, obj: &Object) -> () {
         let mut oid_tup = Tuple::new();
         oid_tup.add_uuid(oid.id);
-        let result_future = tr.get(oid_tup.pack()).await;
+
+        self.tr.set(oid_tup.pack(), obj.to_tuple().pack())
+    }
+
+    pub async fn get(&self, oid: Oid) -> Result<Object, ObjGetError> {
+        let mut oid_tup = Tuple::new();
+        oid_tup.add_uuid(oid.id);
+        let result_future = self.tr.get(oid_tup.pack()).await;
 
         match result_future {
             Ok(result) => match result {
@@ -254,27 +263,23 @@ impl ObjectDB {
         }
     }
 
-    pub fn add_verb(tr: &FdbTransaction, definer: Oid, name: String, value: &Method) {
+    pub fn add_verb(&self, definer: Oid, name: String, value: &Method) {
         let verbdef = VerbDef {
             definer: definer,
             name: name,
         };
         let verbdef_key = verbdef.to_tuple();
         let value_tuple = value.clone().to_tuple();
-        tr.set(verbdef_key.pack(), value_tuple.pack());
+        self.tr.set(verbdef_key.pack(), value_tuple.pack());
     }
 
-    pub async fn get_verb(
-        tr: &FdbTransaction,
-        definer: Oid,
-        name: String,
-    ) -> Result<Method, VerbGetError> {
+    pub async fn get_verb(&self, definer: Oid, name: String) -> Result<Method, VerbGetError> {
         let verbdef = VerbDef {
             definer: definer,
             name: name,
         };
         let verbdef_key = verbdef.to_tuple();
-        let result_future = tr.get(verbdef_key.pack()).await;
+        let result_future = self.tr.get(verbdef_key.pack()).await;
 
         match result_future {
             Ok(result) => match result {
@@ -285,28 +290,25 @@ impl ObjectDB {
         }
     }
 
-    pub fn find_verb(
-        tr: &FdbTransaction,
-        definer: Oid,
-        name: String,
-    ) -> BoxFuture<Result<Method, VerbGetError>> {
+    // TODO does not work, needs debugging.
+    pub fn find_verb(&self, definer: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>> {
         // Look locally first.
         async move {
-            let local_look = ObjectDB::get_verb(tr, definer, name.clone()).await;
+            let local_look = self.get_verb(definer, name.clone()).await;
 
             match local_look {
                 Ok(r) => Ok(r),
 
                 Err(e) if e == VerbGetError::DoesNotExist() => {
                     // Get delegates list.
-                    let o_look = ObjectDB::get(tr, definer).await;
+                    let o_look = self.get(definer).await;
                     match o_look {
                         Ok(o) => {
                             // Depth first search up delegate tree.
                             for delegate in o.delegates {
                                 // TODO possible to do this in parallel. Explore. Probably not much
                                 // value since more than 1 delegate would be rare.
-                                match ObjectDB::find_verb(tr, delegate, name.clone()).await {
+                                match self.find_verb(delegate, name.clone()).await {
                                     Ok(o) => return Ok(o),
                                     Err(e) if e == VerbGetError::DoesNotExist() => continue,
                                     Err(e) => return Err(e),
@@ -327,13 +329,7 @@ impl ObjectDB {
         .boxed()
     }
 
-    pub fn set_property(
-        tr: &FdbTransaction,
-        location: Oid,
-        definer: Oid,
-        name: String,
-        value: &Value,
-    ) {
+    pub fn set_property(&self, location: Oid, definer: Oid, name: String, value: &Value) {
         let propdef = PropDef {
             location: location,
             definer: definer,
@@ -341,11 +337,11 @@ impl ObjectDB {
         };
         let propdef_key = propdef.to_tuple();
         let value_tuple = value.clone().to_tuple();
-        tr.set(propdef_key.pack(), value_tuple.pack());
+        self.tr.set(propdef_key.pack(), value_tuple.pack());
     }
 
     pub async fn get_property(
-        tr: &FdbTransaction,
+        &self,
         location: Oid,
         definer: Oid,
         name: String,
@@ -356,7 +352,7 @@ impl ObjectDB {
             name: name,
         };
         let propdef_key = propdef.to_tuple();
-        let result_future = tr.get(propdef_key.pack()).await;
+        let result_future = self.tr.get(propdef_key.pack()).await;
 
         match result_future {
             Ok(result) => match result {
@@ -369,7 +365,7 @@ impl ObjectDB {
 
     // TODO does not work. Something wrong with the range query
     pub fn get_properties(
-        tr: &FdbTransaction,
+        &self,
         location: Oid,
         definer: Oid,
     ) -> Result<impl tokio_stream::Stream<Item = PropDef>, PropGetError> {
@@ -377,7 +373,7 @@ impl ObjectDB {
         let end_key = PropDef::list_end_key(location, definer).pack();
         let ks_start = KeySelector::first_greater_or_equal(start_key);
         let ks_end = KeySelector::last_less_or_equal(end_key);
-        let range = tr.get_range(ks_start, ks_end, RangeOptions::default());
+        let range = self.tr.get_range(ks_start, ks_end, RangeOptions::default());
         println!("Range: {:?}", range);
         let propdefs = range.map(|kv| -> PropDef {
             let key = kv.unwrap().get_key_ref().clone();

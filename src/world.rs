@@ -10,7 +10,7 @@ use uuid::Uuid;
 use wasmtime;
 use wasmtime::Module;
 
-use crate::object::{Method, Object, ObjectDB, Oid, PropDef, Value};
+use crate::object::{Method, Object, Oid, PropDef, ObjDBTxHandle, Value};
 
 // Owns the database and WASM runtime, and hosts methods for accessing the world.
 pub struct World<'world_lifetime> {
@@ -31,11 +31,10 @@ impl<'world_lifetime> World<'world_lifetime> {
         let engine = wasmtime::Engine::default();
         let mut linker: wasmtime::Linker<&World<'world_lifetime>> = wasmtime::Linker::new(&engine);
 
-        let into_func =
-            |_caller: wasmtime::Caller<'_, &World<'world_lifetime>>, param: i32| {
-                println!("Got {:?} from WebAssembly", param);
-                ()
-            };
+        let into_func = |_caller: wasmtime::Caller<'_, &World<'world_lifetime>>, param: i32| {
+            println!("Got {:?} from WebAssembly", param);
+            ()
+        };
 
         linker
             .func_wrap("host", "log", into_func)
@@ -51,18 +50,22 @@ impl<'world_lifetime> World<'world_lifetime> {
     pub async fn create_connection_object(&self) -> Result<Oid, Box<dyn Error>> {
         let new_oid = Oid { id: Uuid::new_v4() };
         self.fdb_database.run(|tr| async move {
+            let odb = ObjDBTxHandle::new(&tr);
             let sys_oid = Oid { id: Uuid::nil() };
-            let connection_proto = ObjectDB::get_property(&tr, sys_oid.clone(), sys_oid.clone(), String::from("connection")).await.expect("Unable to get connection proto");
+            let connection_proto = odb
+                .get_property(sys_oid.clone(), sys_oid.clone(), String::from("connection"))
+                .await
+                .expect("Unable to get connection proto");
 
             match connection_proto {
                 Value::Obj(conn_oid) => {
-                        let conn_obj = Object {
-                            oid: new_oid.clone(),
-                            delegates: vec![conn_oid]
-                        };
-                        ObjectDB::put(&tr, conn_oid.clone(), &conn_obj);
-                        Ok(())
-                    }
+                    let conn_obj = Object {
+                        oid: new_oid.clone(),
+                        delegates: vec![conn_oid],
+                    };
+                    odb.put(conn_oid.clone(), &conn_obj);
+                    Ok(())
+                }
                 v => {
                     panic!("Could not get connection proto OID, got {:?} instead", v);
                 }
@@ -76,11 +79,13 @@ impl<'world_lifetime> World<'world_lifetime> {
         let delegates = &delegates.clone();
         self.fdb_database
             .run(|tr| async move {
+                let odb = ObjDBTxHandle::new(&tr);
+
                 let new_obj = Object {
                     oid: new_oid.clone(),
                     delegates: delegates.clone(),
                 };
-                ObjectDB::put(&tr, new_oid.clone(), &new_obj);
+                odb.put(new_oid.clone(), &new_obj);
                 Ok(())
             })
             .await
@@ -105,7 +110,9 @@ impl<'world_lifetime> World<'world_lifetime> {
         // Invoke "receive" method on the system object with the connection object
         self.fdb_database
             .run(|tr| async move {
-                let verbval = ObjectDB::find_verb(&tr, connection, String::from("receive")).await;
+                let odb = ObjDBTxHandle::new(&tr);
+
+                let verbval = odb.find_verb(connection, String::from("receive")).await;
                 println!("Receive verb: {:?}", verbval);
                 self.execute_method(&verbval.unwrap())
                     .expect("Couldn't invoke receive method");
@@ -121,23 +128,24 @@ impl<'world_lifetime> World<'world_lifetime> {
 
         let bootstrap_objects = |tr| async move {
             // Create root object.
-            let root_oid = Oid { id : Uuid::new_v4() };
+            let root_oid = Oid { id: Uuid::new_v4() };
             let bootstrap_root = Object {
                 oid: root_oid.clone(),
                 delegates: vec![],
             };
-            ObjectDB::put(&tr, root_oid.clone(), &bootstrap_root);
+            let odb = ObjDBTxHandle::new(&tr);
+
+            odb.put(root_oid.clone(), &bootstrap_root);
 
             // Create the sys object as a child of it.
             let bootstrap_sys = Object {
                 oid: sys_oid.clone(),
                 delegates: vec![root_oid],
             };
-            ObjectDB::put(&tr, sys_oid.clone(), &bootstrap_sys);
+            odb.put(sys_oid.clone(), &bootstrap_sys);
 
             // Attach a reference to 'root' onto the sys object.
-            ObjectDB::set_property(
-                &tr,
+            odb.set_property(
                 sys_oid.clone(),
                 sys_oid.clone(),
                 String::from("root"),
@@ -145,14 +153,13 @@ impl<'world_lifetime> World<'world_lifetime> {
             );
 
             // Then create connection prototype.
-            let connection_prototype_oid = Oid { id : Uuid::new_v4() };
+            let connection_prototype_oid = Oid { id: Uuid::new_v4() };
             let connection_prototype = Object {
                 oid: connection_prototype_oid.clone(),
                 delegates: vec![],
             };
-            ObjectDB::put(&tr, connection_prototype_oid.clone(), &connection_prototype);
-            ObjectDB::set_property(
-                &tr,
+            odb.put(connection_prototype_oid.clone(), &connection_prototype);
+            odb.set_property(
                 sys_oid.clone(),
                 sys_oid.clone(),
                 String::from("connection"),
@@ -161,8 +168,7 @@ impl<'world_lifetime> World<'world_lifetime> {
 
             // Sys 'log' method.
             // TODO actually handle proper string arguments etc. here
-            ObjectDB::add_verb(
-                &tr,
+            odb.add_verb(
                 sys_oid.clone(),
                 String::from("syslog"),
                 &Method {
@@ -179,8 +185,7 @@ impl<'world_lifetime> World<'world_lifetime> {
 
             // Connection 'receive' method.
             // TODO actually handle the websocket payload here, etc.
-            ObjectDB::add_verb(
-                &tr,
+            odb.add_verb(
                 connection_prototype_oid.clone(),
                 String::from("receive"),
                 &Method {
@@ -200,10 +205,11 @@ impl<'world_lifetime> World<'world_lifetime> {
 
         // Just a quick test of some of the functions for now.
         let read_obj = |tr| async move {
-            let root_obj = ObjectDB::get(&tr, sys_oid.clone()).await;
+            let odb = ObjDBTxHandle::new(&tr);
+            let root_obj = odb.get(sys_oid.clone()).await;
             println!("Root Object {:?}", root_obj.unwrap());
 
-            let verbval = ObjectDB::find_verb(&tr, sys_oid, String::from("syslog")).await;
+            let verbval = odb.find_verb(sys_oid, String::from("syslog")).await;
             println!("Verb: {:?}", verbval);
             self.execute_method(&verbval.unwrap());
 
@@ -229,7 +235,6 @@ impl<'world_lifetime> World<'world_lifetime> {
             .wasm_linker
             .instantiate(&mut store, &module)
             .expect("Not able to create instance");
-
 
         let verb_func = instance
             .get_typed_func::<i32, (), _>(&mut store, "invoke")
