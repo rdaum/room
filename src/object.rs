@@ -47,7 +47,6 @@ pub struct Object {
     pub delegates: Vec<Oid>,
 }
 
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum ObjGetError {
     DbError(),
@@ -130,4 +129,3 @@ pub trait ObjDBHandle {
         definer: Oid,
     ) -> Result<Box<dyn tokio_stream::Stream<Item = PropDef>>, PropGetError>;
 }
-

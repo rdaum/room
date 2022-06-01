@@ -4,12 +4,15 @@ use fdb::range::RangeOptions;
 use fdb::transaction::{FdbTransaction, ReadTransaction, Transaction};
 use fdb::tuple::Tuple;
 use fdb::KeySelector;
-use uuid::Uuid;
 use futures::future::{BoxFuture, FutureExt};
-use int_enum::IntEnum;
 use futures::StreamExt;
+use int_enum::IntEnum;
+use uuid::Uuid;
 
-use crate::object::{Method, Object, VerbDef, Oid, Value, PropDef, ObjDBHandle, ValueType, ObjGetError, VerbGetError, PropGetError};
+use crate::object::{
+    Method, ObjDBHandle, ObjGetError, Object, Oid, PropDef, PropGetError, Value, ValueType,
+    VerbDef, VerbGetError,
+};
 
 pub trait Serialize {
     fn to_tuple(&self) -> Tuple;
@@ -67,7 +70,6 @@ impl RangeKey for PropDef {
         tup
     }
 }
-
 
 impl Serialize for VerbDef {
     fn to_tuple(&self) -> Tuple {
@@ -217,7 +219,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
                 Err(_) => Err(ObjGetError::DbError()),
             }
         }
-            .boxed()
+        .boxed()
     }
 
     fn put_verb(&self, definer: Oid, name: String, value: &Method) {
@@ -247,7 +249,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
                 Err(_) => Err(VerbGetError::DbError()),
             }
         }
-            .boxed()
+        .boxed()
     }
 
     // TODO does not work, needs debugging.
@@ -286,7 +288,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
                 Err(e) => return Err(e),
             }
         }
-            .boxed()
+        .boxed()
     }
 
     fn set_property(&self, location: Oid, definer: Oid, name: String, value: &Value) {
@@ -323,7 +325,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
                 Err(_) => Err(PropGetError::DbError()),
             }
         }
-            .boxed()
+        .boxed()
     }
 
     // TODO does not work. Something wrong with the range query

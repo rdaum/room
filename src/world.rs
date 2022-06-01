@@ -11,4 +11,3 @@ pub trait World {
     fn destroy_object(&self, oid: Oid) -> BoxFuture<Result<(), Box<dyn Error>>>;
     fn initialize_world(&self) -> BoxFuture<Result<(), Box<dyn Error>>>;
 }
-

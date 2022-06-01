@@ -7,10 +7,12 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::accept_async;
 use tungstenite::Result;
 
-pub mod object;
-pub mod world;
 pub mod fdb_object;
 pub mod fdb_world;
+pub mod object;
+pub mod vm;
+pub mod wasm_vm;
+pub mod world;
 
 async fn accept_connection<'world_lifetime>(
     peer: SocketAddr,
@@ -68,7 +70,8 @@ async fn handle_connection<'world_lifetime>(
 async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
 
-    let world = fdb_world::FdbWorld::new();
+    let vm = wasm_vm::WasmVM::new();
+    let world = fdb_world::FdbWorld::new(vm);
     match world.initialize_world().await {
         Ok(()) => {
             info!("World initialized.")
