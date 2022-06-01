@@ -1,26 +1,26 @@
-use int_enum::IntEnum;
-
 use assert_str::assert_str_eq;
-use uuid::Uuid;
-use fdb::tuple::Tuple;
-use fdb::transaction::{FdbTransaction, ReadTransaction, Transaction};
-use fdb::{Key, KeySelector};
-use futures::future::{BoxFuture, FutureExt};
-use fdb::error::{FdbError, FdbResult};
 use bytes::Bytes;
+use fdb::error::FdbError;
 use fdb::range::RangeOptions;
+use fdb::transaction::{FdbTransaction, ReadTransaction, Transaction};
+use fdb::tuple::Tuple;
+use fdb::KeySelector;
+use futures::future::{BoxFuture, FutureExt};
+use futures::StreamExt;
+use int_enum::IntEnum;
+use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct Oid {
-    id: uuid::Uuid,
+pub struct Oid {
+    pub id: uuid::Uuid,
 }
 
 // The definition of a property slot on an object.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct PropDef {
-    location: Oid,
-    definer: Oid,
-    name: String,
+pub struct PropDef {
+    pub location: Oid,
+    pub definer: Oid,
+    pub name: String,
 }
 
 impl PropDef {
@@ -70,14 +70,14 @@ impl PropDef {
 
 #[repr(i8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, IntEnum)]
-enum ValueType {
+pub enum ValueType {
     String = 0,
     Number = 1,
     Obj = 2,
 }
 
 #[derive(Clone, Debug)]
-enum Value {
+pub enum Value {
     String(String),
     Number(f64),
     Obj(Oid),
@@ -127,7 +127,7 @@ impl Value {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct VerbDef {
+pub struct VerbDef {
     definer: Oid,
     name: String,
 }
@@ -153,8 +153,8 @@ impl VerbDef {
 }
 
 #[derive(Clone, Debug)]
-struct Method {
-    method: Bytes,
+pub struct Method {
+    pub method: Bytes,
 }
 
 impl Method {
@@ -172,28 +172,9 @@ impl Method {
 }
 
 #[derive(Clone, Debug)]
-struct Object {
-    oid: Oid,
-    delegates: Vec<Oid>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum ObjGetError {
-    DbError(FdbError),
-    DoesNotExist(),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum PropGetError {
-    DbError(FdbError),
-    DoesNotExist(),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum VerbGetError {
-    DbError(FdbError),
-    DoesNotExist(),
-    Internal,
+pub struct Object {
+    pub oid: Oid,
+    pub delegates: Vec<Oid>,
 }
 
 impl Object {
@@ -219,7 +200,7 @@ impl Object {
         let mut offset = 2;
         let num_delegates = tuple.get_i32(offset).unwrap();
         offset = offset + 1;
-        for delegate_num in 1..num_delegates {
+        for _delegate_num in 1..num_delegates {
             let delegate_id = tuple.get_uuid_ref(offset).unwrap();
             obj.delegates.push(Oid {
                 id: delegate_id.clone(),
@@ -228,7 +209,30 @@ impl Object {
         }
         obj
     }
+}
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ObjGetError {
+    DbError(FdbError),
+    DoesNotExist(),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PropGetError {
+    DbError(FdbError),
+    DoesNotExist(),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum VerbGetError {
+    DbError(FdbError),
+    DoesNotExist(),
+    Internal,
+}
+
+pub struct ObjectDB {}
+
+impl ObjectDB {
     pub fn put(tr: &FdbTransaction, oid: Oid, obj: &Object) -> () {
         let mut oid_tup = Tuple::new();
         oid_tup.add_uuid(oid.id);
@@ -288,21 +292,21 @@ impl Object {
     ) -> BoxFuture<Result<Method, VerbGetError>> {
         // Look locally first.
         async move {
-            let local_look = Object::get_verb(tr, definer, name.clone()).await;
+            let local_look = ObjectDB::get_verb(tr, definer, name.clone()).await;
 
-            match (local_look) {
+            match local_look {
                 Ok(r) => Ok(r),
 
                 Err(e) if e == VerbGetError::DoesNotExist() => {
                     // Get delegates list.
-                    let o_look = Object::get(tr, definer).await;
+                    let o_look = ObjectDB::get(tr, definer).await;
                     match o_look {
                         Ok(o) => {
                             // Depth first search up delegate tree.
                             for delegate in o.delegates {
                                 // TODO possible to do this in parallel. Explore. Probably not much
                                 // value since more than 1 delegate would be rare.
-                                match Object::find_verb(tr, delegate, name.clone()).await {
+                                match ObjectDB::find_verb(tr, delegate, name.clone()).await {
                                     Ok(o) => return Ok(o),
                                     Err(e) if e == VerbGetError::DoesNotExist() => continue,
                                     Err(e) => return Err(e),
@@ -320,7 +324,7 @@ impl Object {
                 Err(e) => return Err(e),
             }
         }
-            .boxed()
+        .boxed()
     }
 
     pub fn set_property(
@@ -368,7 +372,7 @@ impl Object {
         tr: &FdbTransaction,
         location: Oid,
         definer: Oid,
-    ) -> Result<impl tokio_stream::Stream<Item=PropDef>, PropGetError> {
+    ) -> Result<impl tokio_stream::Stream<Item = PropDef>, PropGetError> {
         let start_key = PropDef::list_start_key(location, definer).pack();
         let end_key = PropDef::list_end_key(location, definer).pack();
         let ks_start = KeySelector::first_greater_or_equal(start_key);
