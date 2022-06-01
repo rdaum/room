@@ -30,7 +30,7 @@ async fn handle_connection<'world_lifetime>(
     let mut ws_stream = accept_async(stream).await.expect("Failed to accept");
 
     let conn_oid = world
-        .create_object(vec![/* todo connection prototype parent here */])
+        .create_connection_object()
         .await
         .expect("Failed to create connection object");
     info!("New WebSocket connection: {} to OID {:?}", peer, conn_oid);

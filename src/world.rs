@@ -5,7 +5,6 @@ use bytes::Bytes;
 use fdb::database::FdbDatabase;
 use fdb::transaction::Transaction;
 use fdb::tuple::Tuple;
-use tokio_stream::StreamExt;
 use tungstenite::Message;
 use uuid::Uuid;
 use wasmtime;
@@ -33,19 +32,43 @@ impl<'world_lifetime> World<'world_lifetime> {
         let mut linker: wasmtime::Linker<&World<'world_lifetime>> = wasmtime::Linker::new(&engine);
 
         let into_func =
-            |_caller: wasmtime::Caller<'_, &World<'world_lifetime>>, param: i32, arg: i32| {
-                println!("Got {} {} from WebAssembly", param, arg);
-                param + 1
+            |_caller: wasmtime::Caller<'_, &World<'world_lifetime>>, param: i32| {
+                println!("Got {:?} from WebAssembly", param);
+                ()
             };
 
         linker
-            .func_wrap("host", "console_log", into_func)
+            .func_wrap("host", "log", into_func)
             .expect("Unable to link externals");
+
         World {
             wasm_engine: engine,
             wasm_linker: linker,
             fdb_database: fdb_database,
         }
+    }
+
+    pub async fn create_connection_object(&self) -> Result<Oid, Box<dyn Error>> {
+        let new_oid = Oid { id: Uuid::new_v4() };
+        self.fdb_database.run(|tr| async move {
+            let sys_oid = Oid { id: Uuid::nil() };
+            let connection_proto = ObjectDB::get_property(&tr, sys_oid.clone(), sys_oid.clone(), String::from("connection")).await.expect("Unable to get connection proto");
+
+            match connection_proto {
+                Value::Obj(conn_oid) => {
+                        let conn_obj = Object {
+                            oid: new_oid.clone(),
+                            delegates: vec![conn_oid]
+                        };
+                        ObjectDB::put(&tr, conn_oid.clone(), &conn_obj);
+                        Ok(())
+                    }
+                v => {
+                    panic!("Could not get connection proto OID, got {:?} instead", v);
+                }
+            }
+        });
+        Ok(new_oid)
     }
 
     pub async fn create_object(&self, delegates: Vec<Oid>) -> Result<Oid, Box<dyn Error>> {
@@ -97,18 +120,20 @@ impl<'world_lifetime> World<'world_lifetime> {
         let sys_oid = Oid { id: Uuid::nil() };
 
         let bootstrap_objects = |tr| async move {
-            // Create the root object.
-            let bootstrap_sys = Object {
-                oid: sys_oid.clone(),
+            // Create root object.
+            let root_oid = Oid { id : Uuid::new_v4() };
+            let bootstrap_root = Object {
+                oid: root_oid.clone(),
                 delegates: vec![],
             };
-            ObjectDB::put(&tr, sys_oid.clone(), &bootstrap_sys);
+            ObjectDB::put(&tr, root_oid.clone(), &bootstrap_root);
 
-            // And then the 'root' object as a child of it.
-            let bootstrap_root = self
-                .create_object(vec![sys_oid.clone()])
-                .await
-                .expect("Unable to create system object");
+            // Create the sys object as a child of it.
+            let bootstrap_sys = Object {
+                oid: sys_oid.clone(),
+                delegates: vec![root_oid],
+            };
+            ObjectDB::put(&tr, sys_oid.clone(), &bootstrap_sys);
 
             // Attach a reference to 'root' onto the sys object.
             ObjectDB::set_property(
@@ -116,60 +141,55 @@ impl<'world_lifetime> World<'world_lifetime> {
                 sys_oid.clone(),
                 sys_oid.clone(),
                 String::from("root"),
-                &Value::Obj(bootstrap_root.clone()),
+                &Value::Obj(root_oid.clone()),
+            );
+
+            // Then create connection prototype.
+            let connection_prototype_oid = Oid { id : Uuid::new_v4() };
+            let connection_prototype = Object {
+                oid: connection_prototype_oid.clone(),
+                delegates: vec![],
+            };
+            ObjectDB::put(&tr, connection_prototype_oid.clone(), &connection_prototype);
+            ObjectDB::set_property(
+                &tr,
+                sys_oid.clone(),
+                sys_oid.clone(),
+                String::from("connection"),
+                &Value::Obj(connection_prototype_oid.clone()),
             );
 
             // Sys 'log' method.
+            // TODO actually handle proper string arguments etc. here
             ObjectDB::add_verb(
                 &tr,
                 sys_oid.clone(),
                 String::from("syslog"),
                 &Method {
-                    /*
-                    Compiled from:
-                        extern void host_log(const char *log_line);
-
-                        void syslog(const char *log_line) {
-                          host_log(log_line);
-                        }
-
-                     Janky.
-                     */
                     method: Bytes::from(
                         r#"(module
-  (type (;0;) (func (param i32)))
-  (import "env" "__linear_memory" (memory (;0;) 0))
-  (import "env" "__stack_pointer" (global (;0;) (mut i32)))
-  (import "env" "host_log" (func (;0;) (type 0)))
-  (func $syslog (type 0) (param i32)
-    (local i32 i32 i32 i32 i32 i32)
-    global.get 0
-    local.set 1
-    i32.const 16
-    local.set 2
-    local.get 1
-    local.get 2
-    i32.sub
-    local.set 3
-    local.get 3
-    global.set 0
-    local.get 3
-    local.get 0
-    i32.store offset=12
-    local.get 3
-    i32.load offset=12
-    local.set 4
-    local.get 4
-    call 0
-    i32.const 16
-    local.set 5
-    local.get 3
-    local.get 5
-    i32.add
-    local.set 6
-    local.get 6
-    global.set 0
-    return))
+                            (import "host" "log" (func $host/log (param i32)))
+                            (func $log (param $0 i32) get_local $0 (call $host/log))
+                            (export "invoke" (func $log))
+                            )
+    "#,
+                    ),
+                },
+            );
+
+            // Connection 'receive' method.
+            // TODO actually handle the websocket payload here, etc.
+            ObjectDB::add_verb(
+                &tr,
+                connection_prototype_oid.clone(),
+                String::from("receive"),
+                &Method {
+                    method: Bytes::from(
+                        r#"(module
+                            (import "host" "log" (func $host/log (param i32)))
+                            (func $log (param $0 i32) get_local $0 (call $host/log))
+                            (export "invoke" (func $log))
+                            )
     "#,
                     ),
                 },
@@ -194,7 +214,7 @@ impl<'world_lifetime> World<'world_lifetime> {
         Ok(())
     }
 
-    fn execute_method(&self, method: &Method) -> Result<i32, Box<dyn Error>> {
+    fn execute_method(&self, method: &Method) -> Result<(), Box<dyn Error>> {
         let mut store = wasmtime::Store::new(&self.wasm_engine, self);
 
         // TODO: how to wire this up to __linear_memory? And how to set __stack_pointer, etc?
@@ -209,8 +229,10 @@ impl<'world_lifetime> World<'world_lifetime> {
             .wasm_linker
             .instantiate(&mut store, &module)
             .expect("Not able to create instance");
+
+
         let verb_func = instance
-            .get_typed_func::<i32, i32, _>(&mut store, "invoke")
+            .get_typed_func::<i32, (), _>(&mut store, "invoke")
             .expect("Didn't create typed func");
 
         Ok(verb_func.call(&mut store, 1).unwrap())
