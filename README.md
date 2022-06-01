@@ -1,3 +1,9 @@
+What it is/will-be:
+
+ * Stores MOO-like objects (verbs/properties/prototypes) in a distributed transactional DB (FoundationDB)
+ * Services requests to execute "verbs" on those objects over Websockets
+ * "Verbs" are WASM programs.
+
 To run:
 
  * Install FoundationDB (client and server)
