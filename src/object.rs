@@ -10,6 +10,11 @@ use futures::StreamExt;
 use int_enum::IntEnum;
 use uuid::Uuid;
 
+trait Serialize {
+    fn to_tuple(&self) -> Tuple;
+    fn from_tuple(tuple: &Tuple) -> Self;
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Oid {
     pub id: uuid::Uuid,
@@ -23,8 +28,8 @@ pub struct PropDef {
     pub name: String,
 }
 
-impl PropDef {
-    pub fn to_tuple(&self) -> Tuple {
+impl Serialize for PropDef {
+    fn to_tuple(&self) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_string(String::from("PROPDEF"));
         tup.add_uuid(self.location.id.clone());
@@ -33,7 +38,7 @@ impl PropDef {
         tup
     }
 
-    pub fn from_tuple(tuple: &Tuple) -> PropDef {
+    fn from_tuple(tuple: &Tuple) -> PropDef {
         assert_str_eq!(tuple.get_string_ref(0).unwrap(), String::from("PROPDEF"));
         PropDef {
             location: Oid {
@@ -45,7 +50,9 @@ impl PropDef {
             name: tuple.get_string_ref(1).unwrap().clone(),
         }
     }
+}
 
+impl PropDef {
     pub fn list_start_key(location: Oid, definer: Oid) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_string(String::from("PROPDEF"));
@@ -83,8 +90,8 @@ pub enum Value {
     Obj(Oid),
 }
 
-impl Value {
-    pub fn to_tuple(self: Value) -> Tuple {
+impl Serialize for Value {
+    fn to_tuple(&self) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_string(String::from("VALUE"));
         match &self {
@@ -104,7 +111,7 @@ impl Value {
         tup
     }
 
-    pub fn from_tuple(tuple: &Tuple) -> Value {
+    fn from_tuple(tuple: &Tuple) -> Value {
         assert_str_eq!(tuple.get_string_ref(0).unwrap(), String::from("VALUE"));
         let type_val_idx = tuple.get_i8(1).unwrap();
 
@@ -132,8 +139,8 @@ pub struct VerbDef {
     name: String,
 }
 
-impl VerbDef {
-    pub fn to_tuple(&self) -> Tuple {
+impl Serialize for VerbDef {
+    fn to_tuple(&self) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_string(String::from("VERBDEF"));
         tup.add_string(self.name.clone());
@@ -141,7 +148,7 @@ impl VerbDef {
         tup
     }
 
-    pub fn from_tuple(tuple: &Tuple) -> VerbDef {
+    fn from_tuple(tuple: &Tuple) -> VerbDef {
         assert_str_eq!(tuple.get_string_ref(0).unwrap(), String::from("VERBDEF"));
         VerbDef {
             name: tuple.get_string_ref(1).unwrap().clone(),
@@ -157,14 +164,14 @@ pub struct Method {
     pub method: Bytes,
 }
 
-impl Method {
-    pub fn to_tuple(&self) -> Tuple {
+impl Serialize for Method {
+    fn to_tuple(&self) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_bytes(self.method.clone());
         tup
     }
 
-    pub fn from_tuple(tuple: &Tuple) -> Method {
+    fn from_tuple(tuple: &Tuple) -> Method {
         Method {
             method: tuple.get_bytes_ref(0).unwrap().clone(),
         }
@@ -177,7 +184,7 @@ pub struct Object {
     pub delegates: Vec<Oid>,
 }
 
-impl Object {
+impl Serialize for Object {
     fn to_tuple(&self) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_string(String::from("OBJECT"));

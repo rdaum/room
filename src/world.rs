@@ -70,7 +70,7 @@ impl<'world_lifetime> World<'world_lifetime> {
                     panic!("Could not get connection proto OID, got {:?} instead", v);
                 }
             }
-        });
+        }).await.expect("Could not create connection object");
         Ok(new_oid)
     }
 
