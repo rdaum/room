@@ -10,7 +10,6 @@ use futures::future::BoxFuture;
 use futures::FutureExt;
 use tungstenite::Message;
 use uuid::Uuid;
-use wasmtime;
 
 use crate::fdb_object::ObjDBTxHandle;
 use crate::object::{Method, Object, Oid, Value};
