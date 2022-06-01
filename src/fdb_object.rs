@@ -220,7 +220,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
             .boxed()
     }
 
-    fn add_verb(&self, definer: Oid, name: String, value: &Method) {
+    fn put_verb(&self, definer: Oid, name: String, value: &Method) {
         let verbdef = VerbDef {
             definer: definer,
             name: name,

@@ -10,11 +10,12 @@ use tungstenite::Result;
 pub mod object;
 pub mod world;
 pub mod fdb_object;
+pub mod fdb_world;
 
 async fn accept_connection<'world_lifetime>(
     peer: SocketAddr,
     stream: TcpStream,
-    world: Arc<world::World<'world_lifetime>>,
+    world: Arc<dyn world::World + Send + Sync + 'world_lifetime>,
 ) {
     if let Err(e) = handle_connection(peer, stream, world).await {
         match e {
@@ -26,7 +27,7 @@ async fn accept_connection<'world_lifetime>(
 async fn handle_connection<'world_lifetime>(
     peer: SocketAddr,
     stream: TcpStream,
-    world: Arc<world::World<'world_lifetime>>,
+    world: Arc<dyn world::World + Send + Sync + 'world_lifetime>,
 ) -> tungstenite::Result<()> {
     let mut ws_stream = accept_async(stream).await.expect("Failed to accept");
 
@@ -67,7 +68,7 @@ async fn handle_connection<'world_lifetime>(
 async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
 
-    let world = Arc::new(world::World::new());
+    let world = fdb_world::FdbWorld::new();
     match world.initialize_world().await {
         Ok(()) => {
             info!("World initialized.")
