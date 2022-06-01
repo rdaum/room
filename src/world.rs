@@ -10,7 +10,8 @@ use uuid::Uuid;
 use wasmtime;
 use wasmtime::Module;
 
-use crate::object::{Method, ObjDBTxHandle, Object, Oid, Value};
+use crate::object::{Method, Object, Oid, Value};
+use crate::fdb_object::ObjDBTxHandle;
 
 // Owns the database and WASM runtime, and hosts methods for accessing the world.
 pub struct World<'world_lifetime> {
@@ -211,7 +212,7 @@ impl<'world_lifetime> World<'world_lifetime> {
 
             let verbval = odb.find_verb(sys_oid, String::from("syslog")).await;
             println!("Verb: {:?}", verbval);
-            self.execute_method(&verbval.unwrap());
+            self.execute_method(&verbval.unwrap()).expect("Could not execute method");
 
             Ok(())
         };
@@ -222,12 +223,6 @@ impl<'world_lifetime> World<'world_lifetime> {
 
     fn execute_method(&self, method: &Method) -> Result<(), Box<dyn Error>> {
         let mut store = wasmtime::Store::new(&self.wasm_engine, self);
-
-        // TODO: how to wire this up to __linear_memory? And how to set __stack_pointer, etc?
-        // Or don't. Point is to have a runtime environment / ABI for verbs, with available memory,
-        // ability to pass arguments etc. Need to think about this.
-        let memory_ty = wasmtime::MemoryType::new(1, Option::None);
-        let memory = wasmtime::Memory::new(&mut store, memory_ty);
 
         let module = Module::new(&self.wasm_engine, &method.method.as_ref())
             .expect("Not able to produce WASM module");

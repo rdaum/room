@@ -9,6 +9,7 @@ use tungstenite::Result;
 
 pub mod object;
 pub mod world;
+pub mod fdb_object;
 
 async fn accept_connection<'world_lifetime>(
     peer: SocketAddr,
