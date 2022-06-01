@@ -10,7 +10,7 @@ use uuid::Uuid;
 use wasmtime;
 use wasmtime::Module;
 
-use crate::object::{Method, Object, Oid, PropDef, ObjDBTxHandle, Value};
+use crate::object::{Method, ObjDBTxHandle, Object, Oid, Value};
 
 // Owns the database and WASM runtime, and hosts methods for accessing the world.
 pub struct World<'world_lifetime> {

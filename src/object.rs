@@ -230,6 +230,26 @@ pub enum VerbGetError {
     Internal,
 }
 
+pub trait ObjDBHandle {
+    fn put(&self, oid: Oid, obj: &Object) -> ();
+    fn get(&self, oid: Oid) -> BoxFuture<Result<Object, ObjGetError>>;
+    fn add_verb(&self, definer: Oid, name: String, value: &Method);
+    fn get_verb(&self, definer: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>>;
+    fn find_verb(&self, definer: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>>;
+    fn set_property(&self, location: Oid, definer: Oid, name: String, value: &Value);
+    fn get_property(
+        &self,
+        location: Oid,
+        definer: Oid,
+        name: String,
+    ) -> BoxFuture<Result<Value, PropGetError>>;
+    fn get_properties(
+        &self,
+        location: Oid,
+        definer: Oid,
+    ) -> Result<Box<dyn tokio_stream::Stream<Item = PropDef>>, PropGetError>;
+}
+
 // Performs operations on objects via one transaction.
 pub struct ObjDBTxHandle<'tx_lifetime> {
     tr: &'tx_lifetime FdbTransaction,
@@ -238,32 +258,39 @@ pub struct ObjDBTxHandle<'tx_lifetime> {
 // TODO this should be refactored to use a trait. except traits can't have async functions right
 // now.
 impl<'tx_lifetime> ObjDBTxHandle<'tx_lifetime> {
-    pub fn new(tx: &'tx_lifetime FdbTransaction) -> ObjDBTxHandle<'tx_lifetime> {
-        ObjDBTxHandle { tr: tx }
+    pub fn new(
+        tx: &'tx_lifetime FdbTransaction,
+    ) -> Box<dyn ObjDBHandle + Sync + Send + 'tx_lifetime> {
+        Box::new(ObjDBTxHandle { tr: tx })
     }
+}
 
-    pub fn put(&self, oid: Oid, obj: &Object) -> () {
+impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
+    fn put(&self, oid: Oid, obj: &Object) -> () {
         let mut oid_tup = Tuple::new();
         oid_tup.add_uuid(oid.id);
 
         self.tr.set(oid_tup.pack(), obj.to_tuple().pack())
     }
 
-    pub async fn get(&self, oid: Oid) -> Result<Object, ObjGetError> {
-        let mut oid_tup = Tuple::new();
-        oid_tup.add_uuid(oid.id);
-        let result_future = self.tr.get(oid_tup.pack()).await;
+    fn get(&self, oid: Oid) -> BoxFuture<Result<Object, ObjGetError>> {
+        async move {
+            let mut oid_tup = Tuple::new();
+            oid_tup.add_uuid(oid.id);
+            let result_future = self.tr.get(oid_tup.pack()).await;
 
-        match result_future {
-            Ok(result) => match result {
-                None => Err(ObjGetError::DoesNotExist()),
-                Some(r) => Ok(Object::from_tuple(&Tuple::from_bytes(r).unwrap())),
-            },
-            Err(e) => Err(ObjGetError::DbError(e)),
+            match result_future {
+                Ok(result) => match result {
+                    None => Err(ObjGetError::DoesNotExist()),
+                    Some(r) => Ok(Object::from_tuple(&Tuple::from_bytes(r).unwrap())),
+                },
+                Err(e) => Err(ObjGetError::DbError(e)),
+            }
         }
+        .boxed()
     }
 
-    pub fn add_verb(&self, definer: Oid, name: String, value: &Method) {
+    fn add_verb(&self, definer: Oid, name: String, value: &Method) {
         let verbdef = VerbDef {
             definer: definer,
             name: name,
@@ -273,25 +300,28 @@ impl<'tx_lifetime> ObjDBTxHandle<'tx_lifetime> {
         self.tr.set(verbdef_key.pack(), value_tuple.pack());
     }
 
-    pub async fn get_verb(&self, definer: Oid, name: String) -> Result<Method, VerbGetError> {
-        let verbdef = VerbDef {
-            definer: definer,
-            name: name,
-        };
-        let verbdef_key = verbdef.to_tuple();
-        let result_future = self.tr.get(verbdef_key.pack()).await;
+    fn get_verb(&self, definer: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>> {
+        async move {
+            let verbdef = VerbDef {
+                definer: definer,
+                name: name,
+            };
+            let verbdef_key = verbdef.to_tuple();
+            let result_future = self.tr.get(verbdef_key.pack()).await;
 
-        match result_future {
-            Ok(result) => match result {
-                None => Err(VerbGetError::DoesNotExist()),
-                Some(r) => Ok(Method::from_tuple(&Tuple::from_bytes(r).unwrap())),
-            },
-            Err(e) => Err(VerbGetError::DbError(e)),
+            match result_future {
+                Ok(result) => match result {
+                    None => Err(VerbGetError::DoesNotExist()),
+                    Some(r) => Ok(Method::from_tuple(&Tuple::from_bytes(r).unwrap())),
+                },
+                Err(e) => Err(VerbGetError::DbError(e)),
+            }
         }
+        .boxed()
     }
 
     // TODO does not work, needs debugging.
-    pub fn find_verb(&self, definer: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>> {
+    fn find_verb(&self, definer: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>> {
         // Look locally first.
         async move {
             let local_look = self.get_verb(definer, name.clone()).await;
@@ -329,7 +359,7 @@ impl<'tx_lifetime> ObjDBTxHandle<'tx_lifetime> {
         .boxed()
     }
 
-    pub fn set_property(&self, location: Oid, definer: Oid, name: String, value: &Value) {
+    fn set_property(&self, location: Oid, definer: Oid, name: String, value: &Value) {
         let propdef = PropDef {
             location: location,
             definer: definer,
@@ -340,35 +370,38 @@ impl<'tx_lifetime> ObjDBTxHandle<'tx_lifetime> {
         self.tr.set(propdef_key.pack(), value_tuple.pack());
     }
 
-    pub async fn get_property(
+    fn get_property(
         &self,
         location: Oid,
         definer: Oid,
         name: String,
-    ) -> Result<Value, PropGetError> {
-        let propdef = PropDef {
-            location: location,
-            definer: definer,
-            name: name,
-        };
-        let propdef_key = propdef.to_tuple();
-        let result_future = self.tr.get(propdef_key.pack()).await;
+    ) -> BoxFuture<Result<Value, PropGetError>> {
+        async move {
+            let propdef = PropDef {
+                location: location,
+                definer: definer,
+                name: name,
+            };
+            let propdef_key = propdef.to_tuple();
+            let result_future = self.tr.get(propdef_key.pack()).await;
 
-        match result_future {
-            Ok(result) => match result {
-                None => Err(PropGetError::DoesNotExist()),
-                Some(r) => Ok(Value::from_tuple(&Tuple::from_bytes(r).unwrap())),
-            },
-            Err(e) => Err(PropGetError::DbError(e)),
+            match result_future {
+                Ok(result) => match result {
+                    None => Err(PropGetError::DoesNotExist()),
+                    Some(r) => Ok(Value::from_tuple(&Tuple::from_bytes(r).unwrap())),
+                },
+                Err(e) => Err(PropGetError::DbError(e)),
+            }
         }
+        .boxed()
     }
 
     // TODO does not work. Something wrong with the range query
-    pub fn get_properties(
+    fn get_properties(
         &self,
         location: Oid,
         definer: Oid,
-    ) -> Result<impl tokio_stream::Stream<Item = PropDef>, PropGetError> {
+    ) -> Result<Box<dyn tokio_stream::Stream<Item = PropDef>>, PropGetError> {
         let start_key = PropDef::list_start_key(location, definer).pack();
         let end_key = PropDef::list_end_key(location, definer).pack();
         let ks_start = KeySelector::first_greater_or_equal(start_key);
@@ -382,6 +415,6 @@ impl<'tx_lifetime> ObjDBTxHandle<'tx_lifetime> {
 
             return PropDef::from_tuple(&key_tuple.unwrap().clone());
         });
-        Ok(propdefs)
+        Ok(Box::new(propdefs))
     }
 }
