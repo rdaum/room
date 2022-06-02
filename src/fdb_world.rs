@@ -1,11 +1,16 @@
-use std::env;
-use std::error::Error;
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    env,
+    error::Error,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
 
 use bytes::Bytes;
 use fdb::database::FdbDatabase;
 use fdb::transaction::Transaction;
 use fdb::tuple::Tuple;
+use futures::channel::mpsc::UnboundedSender;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use tungstenite::Message;
@@ -16,10 +21,13 @@ use crate::object::{Method, Object, Oid, Value};
 use crate::vm::VM;
 use crate::world::World;
 
+type PeerMap = Arc<Mutex<HashMap<Oid, (SocketAddr, UnboundedSender<Message>)>>>;
+
 // Owns the database and WASM runtime, and hosts methods for accessing the world.
 pub struct FdbWorld<'world_lifetime> {
     vm: Box<dyn VM + 'world_lifetime + Send + Sync>,
     fdb_database: FdbDatabase,
+    peer_map: PeerMap,
 }
 
 impl<'world_lifetime> FdbWorld<'world_lifetime> {
@@ -33,14 +41,26 @@ impl<'world_lifetime> FdbWorld<'world_lifetime> {
         let fdb_cluster_file = env::var("FDB_CLUSTER_FILE").expect("FDB_CLUSTER_FILE not defined!");
         let fdb_database = fdb::open_database(fdb_cluster_file).expect("Could not open database");
 
-        Arc::new(FdbWorld { vm, fdb_database })
+        Arc::new(FdbWorld {
+            vm,
+            fdb_database,
+            peer_map: Arc::new(Mutex::new(Default::default())),
+        })
     }
 }
 
 impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
-    fn create_connection_object(&self) -> BoxFuture<Result<Oid, Box<dyn Error>>> {
+    fn create_connection_object(
+        &self,
+        sender: UnboundedSender<Message>,
+        address: SocketAddr,
+    ) -> BoxFuture<Result<Oid, Box<dyn Error>>> {
         async move {
             let new_oid = Oid { id: Uuid::new_v4() };
+            self.peer_map
+                .lock()
+                .unwrap()
+                .insert(new_oid, (address, sender));
             self.fdb_database
                 .run(|tr| async move {
                     let odb = ObjDBTxHandle::new(&tr);
