@@ -14,7 +14,7 @@ use crate::object::{
     VerbDef, VerbGetError,
 };
 
-pub trait Serialize {
+pub trait Tupleize {
     fn to_tuple(&self) -> Tuple;
     fn from_tuple(tuple: &Tuple) -> Self;
 }
@@ -24,7 +24,7 @@ pub trait RangeKey {
     fn list_end_key(location: Oid, definer: Oid) -> Tuple;
 }
 
-impl Serialize for PropDef {
+impl Tupleize for PropDef {
     fn to_tuple(&self) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_string(String::from("PROPDEF"));
@@ -71,7 +71,7 @@ impl RangeKey for PropDef {
     }
 }
 
-impl Serialize for VerbDef {
+impl Tupleize for VerbDef {
     fn to_tuple(&self) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_string(String::from("VERBDEF"));
@@ -91,7 +91,7 @@ impl Serialize for VerbDef {
     }
 }
 
-impl Serialize for Value {
+impl Tupleize for Value {
     fn to_tuple(&self) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_string(String::from("VALUE"));
@@ -134,7 +134,7 @@ impl Serialize for Value {
     }
 }
 
-impl Serialize for Method {
+impl Tupleize for Method {
     fn to_tuple(&self) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_bytes(self.method.clone());
@@ -148,7 +148,7 @@ impl Serialize for Method {
     }
 }
 
-impl Serialize for Object {
+impl Tupleize for Object {
     fn to_tuple(&self) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_string(String::from("OBJECT"));
