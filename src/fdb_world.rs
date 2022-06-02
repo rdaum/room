@@ -50,7 +50,7 @@ impl<'world_lifetime> FdbWorld<'world_lifetime> {
 }
 
 impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
-    fn create_connection_object(
+    fn connect(
         &self,
         sender: UnboundedSender<Message>,
         address: SocketAddr,
@@ -91,8 +91,9 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
         .boxed()
     }
 
-    fn destroy_object(&self, oid: Oid) -> BoxFuture<Result<(), Box<dyn Error>>> {
+    fn disconnect(&self, oid: Oid) -> BoxFuture<Result<(), Box<dyn Error>>> {
         async move {
+            self.peer_map.lock().unwrap().remove(&oid);
             self.fdb_database
                 .run(|tr| async move {
                     let mut oid_tup = Tuple::new();
@@ -128,7 +129,7 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
         .boxed()
     }
 
-    fn initialize_world(&self) -> BoxFuture<Result<(), Box<dyn Error>>> {
+    fn initialize(&self) -> BoxFuture<Result<(), Box<dyn Error>>> {
         async move {
             let sys_oid = Oid { id: Uuid::nil() };
 

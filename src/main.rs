@@ -1,5 +1,5 @@
 use futures::{future, pin_mut, StreamExt};
-use futures_channel::mpsc::{unbounded};
+use futures_channel::mpsc::unbounded;
 use log::*;
 use std::error::Error;
 use std::net::SocketAddr;
@@ -33,7 +33,7 @@ async fn handle_message<'world_lifetime>(
             tungstenite::Error::Protocol(_) | tungstenite::Error::ConnectionClosed => {
                 error!("Closed, deleting {:?}", conn_oid);
                 world
-                    .destroy_object(conn_oid)
+                    .disconnect(conn_oid)
                     .await
                     .expect("Unable to destroy connection object");
             }
@@ -53,7 +53,7 @@ async fn handle_connection<'world_lifetime>(
     let (tx, rx) = unbounded();
     let conn_oid = world
         .clone()
-        .create_connection_object(tx, peer)
+        .connect(tx, peer)
         .await
         .expect("Failed to create connection object");
     info!("New WebSocket connection: {} to OID {:?}", peer, conn_oid);
@@ -61,14 +61,17 @@ async fn handle_connection<'world_lifetime>(
     // Split the stream into inbound/outbound...
     let (outgoing, incoming) = ws_stream.split();
 
-    // And forward messages from 'rx' into the outbound.
+    // Create a future to forward messages from 'rx' into the outbound.
     let receive_forward = rx.map(Ok).forward(outgoing);
 
+    // And create a future to handle inbound messages.
     let process_incoming = incoming.for_each(|msg| async {
         handle_message(conn_oid, msg, world.clone()).await;
     });
 
     pin_mut!(process_incoming, receive_forward);
+
+    // Perform the selection on both inbound/outbound.
     future::select(receive_forward, process_incoming).await;
 
     Ok(())
@@ -80,7 +83,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let vm = wasm_vm::WasmVM::new();
     let world = fdb_world::FdbWorld::new(vm);
-    match world.initialize_world().await {
+    match world.initialize().await {
         Ok(()) => {
             info!("World initialized.")
         }
