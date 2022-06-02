@@ -31,4 +31,10 @@ pub trait World {
     /// * `connection` the connection object associated with the websocket that sent the messages
     /// * `message` the inbound message
     fn receive(&self, connection: Oid, message: Message) -> BoxFuture<Result<(), Box<dyn Error>>>;
+
+    /// Send a websocket message to a connection
+    ///
+    /// * `connection` the oid of the connection object to send the message to, if connected
+    /// * `message` the message to send
+    fn send(&self, connection: Oid, message: Message) -> BoxFuture<Result<(), Box<dyn Error>>>;
 }

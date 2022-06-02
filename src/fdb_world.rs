@@ -12,7 +12,7 @@ use fdb::transaction::Transaction;
 use fdb::tuple::Tuple;
 use futures::channel::mpsc::UnboundedSender;
 use futures::future::BoxFuture;
-use futures::FutureExt;
+use futures::{FutureExt, SinkExt};
 use tungstenite::Message;
 use uuid::Uuid;
 
@@ -118,12 +118,25 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                     let verbval = odb.find_verb(connection, String::from("receive")).await;
                     println!("Receive verb: {:?}", verbval);
                     self.vm
-                        .execute_method(&verbval.unwrap())
+                        .execute_method(&verbval.unwrap(), self)
                         .expect("Couldn't invoke receive method");
                     Ok(())
                 })
                 .await
                 .expect("Could not receive message");
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn send(&self, connection: Oid, message: Message) -> BoxFuture<Result<(), Box<dyn Error>>> {
+        let peer_map = self.peer_map.lock().unwrap();
+        let (_socket_addr, tx) = &peer_map.get(&connection).unwrap();
+        let mut tx = tx.clone();
+        async move {
+            tx.send(message)
+                .await
+                .expect("Could not send message to connection");
             Ok(())
         }
         .boxed()
@@ -219,7 +232,7 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                 let verbval = odb.find_verb(sys_oid, String::from("syslog")).await;
                 println!("Verb: {:?}", verbval);
                 self.vm
-                    .execute_method(&verbval.unwrap())
+                    .execute_method(&verbval.unwrap(), self)
                     .expect("Could not execute method");
 
                 Ok(())

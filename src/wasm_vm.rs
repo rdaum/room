@@ -4,6 +4,7 @@ use wasmtime::Module;
 
 use crate::object::Method;
 use crate::vm::VM;
+use crate::world::World;
 
 pub struct WasmVM<'vm_lifetime> {
     wasm_engine: wasmtime::Engine,
@@ -11,7 +12,7 @@ pub struct WasmVM<'vm_lifetime> {
 }
 
 impl<'vm_lifetime> VM for WasmVM<'vm_lifetime> {
-    fn execute_method(&self, method: &Method) -> Result<(), Box<dyn Error>> {
+    fn execute_method(&self, method: &Method, _world: &dyn World) -> Result<(), Box<dyn Error>> {
         let mut store = wasmtime::Store::new(&self.wasm_engine, self);
 
         let module = Module::new(&self.wasm_engine, &method.method.as_ref())

@@ -103,10 +103,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let listener = TcpListener::bind(args.listen_address)
+    let listener = TcpListener::bind(args.listen_address.clone())
         .await
         .expect("Can't listen");
-    info!("Listening on: {}", addr);
+    info!("Listening on: {}", args.listen_address.clone());
     while let Ok((stream, _)) = listener.accept().await {
         let peer = stream
             .peer_addr()
