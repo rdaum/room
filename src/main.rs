@@ -1,3 +1,4 @@
+use clap::Parser;
 use futures::{future, pin_mut, StreamExt};
 use futures_channel::mpsc::unbounded;
 use log::*;
@@ -14,6 +15,14 @@ pub mod object;
 pub mod vm;
 pub mod wasm_vm;
 pub mod world;
+
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    /// Listen address to bind the websocket server to.
+    #[clap(short, long, default_value = "127.0.0.1:9002")]
+    listen_address: String,
+}
 
 async fn handle_message<'world_lifetime>(
     conn_oid: object::Oid,
@@ -79,6 +88,8 @@ async fn handle_connection<'world_lifetime>(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let args = Args::parse();
+
     env_logger::init();
 
     let vm = wasm_vm::WasmVM::new();
@@ -92,8 +103,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let addr = "127.0.0.1:9002";
-    let listener = TcpListener::bind(&addr).await.expect("Can't listen");
+    let listener = TcpListener::bind(args.listen_address)
+        .await
+        .expect("Can't listen");
     info!("Listening on: {}", addr);
     while let Ok((stream, _)) = listener.accept().await {
         let peer = stream
