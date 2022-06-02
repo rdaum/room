@@ -173,9 +173,7 @@ impl Tupleize for Object {
         offset += 1;
         for _delegate_num in 1..num_delegates {
             let delegate_id = tuple.get_uuid_ref(offset).unwrap();
-            obj.delegates.push(Oid {
-                id: *delegate_id,
-            });
+            obj.delegates.push(Oid { id: *delegate_id });
             offset += 1;
         }
         obj
@@ -221,10 +219,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
     }
 
     fn put_verb(&self, definer: Oid, name: String, value: &Method) {
-        let verbdef = VerbDef {
-            definer,
-            name,
-        };
+        let verbdef = VerbDef { definer, name };
         let verbdef_key = verbdef.to_tuple();
         let value_tuple = value.clone().to_tuple();
         self.tr.set(verbdef_key.pack(), value_tuple.pack());
@@ -232,10 +227,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
 
     fn get_verb(&self, definer: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>> {
         async move {
-            let verbdef = VerbDef {
-                definer,
-                name,
-            };
+            let verbdef = VerbDef { definer, name };
             let verbdef_key = verbdef.to_tuple();
             let result_future = self.tr.get(verbdef_key.pack()).await;
 

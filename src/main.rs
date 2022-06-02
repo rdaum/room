@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::accept_async;
-use tungstenite::Result;
+use tungstenite::{Message, Result};
 
 pub mod fdb_object;
 pub mod fdb_world;
@@ -14,15 +14,30 @@ pub mod vm;
 pub mod wasm_vm;
 pub mod world;
 
-async fn accept_connection<'world_lifetime>(
-    peer: SocketAddr,
-    stream: TcpStream,
+async fn handle_message<'world_lifetime>(
+    conn_oid: object::Oid,
+    msg: Result<Message>,
     world: Arc<dyn world::World + Send + Sync + 'world_lifetime>,
 ) {
-    if let Err(e) = handle_connection(peer, stream, world).await {
-        match e {
-            err => error!("Error processing connection: {}", err),
+    match msg {
+        Ok(m) => {
+            if m.is_text() || m.is_binary() {
+                world
+                    .receive(conn_oid, m)
+                    .await
+                    .expect("Could not receive message");
+            }
         }
+        Err(e) => match e {
+            tungstenite::Error::Protocol(_) | tungstenite::Error::ConnectionClosed => {
+                error!("Closed, deleting {:?}", conn_oid);
+                world
+                    .destroy_object(conn_oid)
+                    .await
+                    .expect("Unable to destroy connection object");
+            }
+            _ => {}
+        },
     }
 }
 
@@ -31,38 +46,29 @@ async fn handle_connection<'world_lifetime>(
     stream: TcpStream,
     world: Arc<dyn world::World + Send + Sync + 'world_lifetime>,
 ) -> tungstenite::Result<()> {
-    let mut ws_stream = accept_async(stream).await.expect("Failed to accept");
+    let ws_stream = accept_async(stream).await.expect("Failed to accept");
 
     let conn_oid = world
+        .clone()
         .create_connection_object()
         .await
         .expect("Failed to create connection object");
     info!("New WebSocket connection: {} to OID {:?}", peer, conn_oid);
 
-    while let Some(msg) = ws_stream.next().await {
-        match msg {
-            Ok(msg) => {
-                if msg.is_text() || msg.is_binary() {
-                    world
-                        .receive(conn_oid, msg)
-                        .await
-                        .expect("Could not call receive");
+    let (mut _outgoing, mut incoming) = ws_stream.split();
+    loop {
+        tokio::select! {
+            msg = incoming.next() => {
+                match msg {
+                    Some(msg) => {
+                        handle_message(conn_oid, msg, world.clone()).await;
+                    }
+                    None => break,
                 }
             }
-            Err(e) => match e {
-                tungstenite::Error::Protocol(_) | tungstenite::Error::ConnectionClosed => {
-                    error!("Closed, deleting {:?}", conn_oid);
-                    world
-                        .destroy_object(conn_oid)
-                        .await
-                        .expect("Unable to destroy connection object");
-                }
-                _ => {
-                    return Err(e);
-                }
-            },
         }
     }
+
     Ok(())
 }
 
@@ -90,7 +96,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .expect("connected streams should have a peer address");
         info!("Peer address: {}", peer);
 
-        tokio::spawn(accept_connection(peer, stream, world.clone()));
+        tokio::spawn(handle_connection(peer, stream, world.clone()));
     }
 
     Ok(())

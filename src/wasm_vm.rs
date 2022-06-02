@@ -37,7 +37,6 @@ impl<'vm_lifetime> WasmVM<'vm_lifetime> {
 
         let into_func = |_caller: wasmtime::Caller<'_, &WasmVM<'vm_lifetime>>, param: i32| {
             println!("Got {:?} from WebAssembly", param);
-            
         };
 
         linker
