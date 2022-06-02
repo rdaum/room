@@ -15,6 +15,7 @@ pub mod object;
 pub mod vm;
 pub mod wasm_vm;
 pub mod world;
+pub mod v8_vm;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -92,7 +93,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     env_logger::init();
 
-    let vm = wasm_vm::WasmVM::new();
+    let vm = v8_vm::V8VM::new();
+
     let world = fdb_world::FdbWorld::new(vm);
     match world.initialize().await {
         Ok(()) => {

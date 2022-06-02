@@ -193,11 +193,7 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                     String::from("syslog"),
                     &Method {
                         method: Bytes::from(
-                            r#"(module
-                            (import "host" "log" (func $host/log (param i32)))
-                            (func $log (param $0 i32) get_local $0 (call $host/log))
-                            (export "invoke" (func $log))
-                            )
+                            r#"console.log("hi");
     "#,
                         ),
                     },
@@ -210,11 +206,7 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                     String::from("receive"),
                     &Method {
                         method: Bytes::from(
-                            r#"(module
-                            (import "host" "log" (func $host/log (param i32)))
-                            (func $log (param $0 i32) get_local $0 (call $host/log))
-                            (export "invoke" (func $log))
-                            )
+                            r#"console.log("hi");
     "#,
                         ),
                     },
