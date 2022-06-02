@@ -28,8 +28,8 @@ impl Serialize for PropDef {
     fn to_tuple(&self) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_string(String::from("PROPDEF"));
-        tup.add_uuid(self.location.id.clone());
-        tup.add_uuid(self.definer.id.clone());
+        tup.add_uuid(self.location.id);
+        tup.add_uuid(self.definer.id);
         tup.add_string(self.name.clone());
         tup
     }
@@ -38,10 +38,10 @@ impl Serialize for PropDef {
         assert_str_eq!(tuple.get_string_ref(0).unwrap(), String::from("PROPDEF"));
         PropDef {
             location: Oid {
-                id: tuple.get_uuid_ref(2).unwrap().clone(),
+                id: *tuple.get_uuid_ref(2).unwrap(),
             },
             definer: Oid {
-                id: tuple.get_uuid_ref(3).unwrap().clone(),
+                id: *tuple.get_uuid_ref(3).unwrap(),
             },
             name: tuple.get_string_ref(1).unwrap().clone(),
         }
@@ -52,8 +52,8 @@ impl RangeKey for PropDef {
     fn list_start_key(location: Oid, definer: Oid) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_string(String::from("PROPDEF"));
-        tup.add_uuid(location.id.clone());
-        tup.add_uuid(definer.id.clone());
+        tup.add_uuid(location.id);
+        tup.add_uuid(definer.id);
 
         println!("Start: {:?}", tup);
         tup
@@ -63,8 +63,8 @@ impl RangeKey for PropDef {
         let mut tup = Tuple::new();
         tup.add_string(String::from("PROPDEF"));
         let increment_location = Uuid::from_u128(location.id.as_u128() + 1);
-        tup.add_uuid(increment_location.clone());
-        tup.add_uuid(definer.id.clone());
+        tup.add_uuid(increment_location);
+        tup.add_uuid(definer.id);
 
         println!("End: {:?}", tup);
         tup
@@ -76,7 +76,7 @@ impl Serialize for VerbDef {
         let mut tup = Tuple::new();
         tup.add_string(String::from("VERBDEF"));
         tup.add_string(self.name.clone());
-        tup.add_uuid(self.definer.id.clone());
+        tup.add_uuid(self.definer.id);
         tup
     }
 
@@ -85,7 +85,7 @@ impl Serialize for VerbDef {
         VerbDef {
             name: tuple.get_string_ref(1).unwrap().clone(),
             definer: Oid {
-                id: tuple.get_uuid_ref(2).unwrap().clone(),
+                id: *tuple.get_uuid_ref(2).unwrap(),
             },
         }
     }
@@ -102,11 +102,11 @@ impl Serialize for Value {
             }
             Value::Number(n) => {
                 tup.add_i8(ValueType::Number as i8);
-                tup.add_f64(n.clone());
+                tup.add_f64(*n);
             }
             Value::Obj(u) => {
                 tup.add_i8(ValueType::Obj as i8);
-                tup.add_uuid(u.id.clone());
+                tup.add_uuid(u.id);
             }
         }
         tup
@@ -120,15 +120,15 @@ impl Serialize for Value {
         match tval {
             ValueType::String => {
                 let str = tuple.get_string_ref(2).unwrap();
-                return Value::String(str.clone());
+                Value::String(str.clone())
             }
             ValueType::Number => {
                 let num = tuple.get_f64(2).unwrap();
-                return Value::Number(num.clone());
+                Value::Number(num)
             }
             ValueType::Obj => {
                 let oid = tuple.get_uuid_ref(2).unwrap();
-                return Value::Obj(Oid { id: oid.clone() });
+                Value::Obj(Oid { id: *oid })
             }
         }
     }
@@ -152,10 +152,10 @@ impl Serialize for Object {
     fn to_tuple(&self) -> Tuple {
         let mut tup = Tuple::new();
         tup.add_string(String::from("OBJECT"));
-        tup.add_uuid(self.oid.id.clone());
+        tup.add_uuid(self.oid.id);
         tup.add_i32(self.delegates.len() as i32);
         for delegate in self.delegates.iter() {
-            tup.add_uuid(delegate.id.clone());
+            tup.add_uuid(delegate.id);
         }
         tup
     }
@@ -164,19 +164,19 @@ impl Serialize for Object {
         assert_str_eq!(tuple.get_string_ref(0).unwrap(), String::from("OBJECT"));
         let mut obj = Object {
             oid: Oid {
-                id: tuple.get_uuid_ref(1).unwrap().clone(),
+                id: *tuple.get_uuid_ref(1).unwrap(),
             },
             delegates: vec![],
         };
         let mut offset = 2;
         let num_delegates = tuple.get_i32(offset).unwrap();
-        offset = offset + 1;
+        offset += 1;
         for _delegate_num in 1..num_delegates {
             let delegate_id = tuple.get_uuid_ref(offset).unwrap();
             obj.delegates.push(Oid {
-                id: delegate_id.clone(),
+                id: *delegate_id,
             });
-            offset = offset + 1;
+            offset += 1;
         }
         obj
     }
@@ -198,7 +198,7 @@ impl<'tx_lifetime> ObjDBTxHandle<'tx_lifetime> {
 }
 
 impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
-    fn put(&self, oid: Oid, obj: &Object) -> () {
+    fn put(&self, oid: Oid, obj: &Object) {
         let mut oid_tup = Tuple::new();
         oid_tup.add_uuid(oid.id);
 
@@ -224,8 +224,8 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
 
     fn put_verb(&self, definer: Oid, name: String, value: &Method) {
         let verbdef = VerbDef {
-            definer: definer,
-            name: name,
+            definer,
+            name,
         };
         let verbdef_key = verbdef.to_tuple();
         let value_tuple = value.clone().to_tuple();
@@ -235,8 +235,8 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
     fn get_verb(&self, definer: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>> {
         async move {
             let verbdef = VerbDef {
-                definer: definer,
-                name: name,
+                definer,
+                name,
             };
             let verbdef_key = verbdef.to_tuple();
             let result_future = self.tr.get(verbdef_key.pack()).await;
@@ -276,7 +276,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
                                     Err(e) => return Err(e),
                                 }
                             }
-                            return Err(VerbGetError::DoesNotExist());
+                            Err(VerbGetError::DoesNotExist())
                         }
                         Err(e) => match e {
                             ObjGetError::DbError() => Err(VerbGetError::DbError()),
@@ -285,7 +285,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
                     }
                 }
 
-                Err(e) => return Err(e),
+                Err(e) => Err(e),
             }
         }
         .boxed()
@@ -293,9 +293,9 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
 
     fn set_property(&self, location: Oid, definer: Oid, name: String, value: &Value) {
         let propdef = PropDef {
-            location: location,
-            definer: definer,
-            name: name,
+            location,
+            definer,
+            name,
         };
         let propdef_key = propdef.to_tuple();
         let value_tuple = value.clone().to_tuple();
@@ -310,9 +310,9 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
     ) -> BoxFuture<Result<Value, PropGetError>> {
         async move {
             let propdef = PropDef {
-                location: location,
-                definer: definer,
-                name: name,
+                location,
+                definer,
+                name,
             };
             let propdef_key = propdef.to_tuple();
             let result_future = self.tr.get(propdef_key.pack()).await;
@@ -345,7 +345,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
             let key_tuple = Tuple::from_bytes(key);
             print!("PD: {:?}", key_tuple);
 
-            return PropDef::from_tuple(&key_tuple.unwrap().clone());
+            PropDef::from_tuple(&key_tuple.unwrap())
         });
         Ok(Box::new(propdefs))
     }

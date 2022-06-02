@@ -73,7 +73,7 @@ pub trait ObjDBHandle {
     ///
     /// * `oid` - the unique identifier for the object
     /// * `obj` - the full object record
-    fn put(&self, oid: Oid, obj: &Object) -> ();
+    fn put(&self, oid: Oid, obj: &Object);
 
     /// Retrieve an object
     ///

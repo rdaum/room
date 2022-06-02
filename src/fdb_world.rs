@@ -46,17 +46,17 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                     let odb = ObjDBTxHandle::new(&tr);
                     let sys_oid = Oid { id: Uuid::nil() };
                     let connection_proto = odb
-                        .get_property(sys_oid.clone(), sys_oid.clone(), String::from("connection"))
+                        .get_property(sys_oid, sys_oid, String::from("connection"))
                         .await
                         .expect("Unable to get connection proto");
 
                     match connection_proto {
                         Value::Obj(conn_oid) => {
                             let conn_obj = Object {
-                                oid: new_oid.clone(),
+                                oid: new_oid,
                                 delegates: vec![conn_oid],
                             };
-                            odb.put(conn_oid.clone(), &conn_obj);
+                            odb.put(conn_oid, &conn_obj);
                             Ok(())
                         }
                         v => {
@@ -116,46 +116,46 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                 // Create root object.
                 let root_oid = Oid { id: Uuid::new_v4() };
                 let bootstrap_root = Object {
-                    oid: root_oid.clone(),
+                    oid: root_oid,
                     delegates: vec![],
                 };
                 let odb = ObjDBTxHandle::new(&tr);
 
-                odb.put(root_oid.clone(), &bootstrap_root);
+                odb.put(root_oid, &bootstrap_root);
 
                 // Create the sys object as a child of it.
                 let bootstrap_sys = Object {
-                    oid: sys_oid.clone(),
+                    oid: sys_oid,
                     delegates: vec![root_oid],
                 };
-                odb.put(sys_oid.clone(), &bootstrap_sys);
+                odb.put(sys_oid, &bootstrap_sys);
 
                 // Attach a reference to 'root' onto the sys object.
                 odb.set_property(
-                    sys_oid.clone(),
-                    sys_oid.clone(),
+                    sys_oid,
+                    sys_oid,
                     String::from("root"),
-                    &Value::Obj(root_oid.clone()),
+                    &Value::Obj(root_oid),
                 );
 
                 // Then create connection prototype.
                 let connection_prototype_oid = Oid { id: Uuid::new_v4() };
                 let connection_prototype = Object {
-                    oid: connection_prototype_oid.clone(),
+                    oid: connection_prototype_oid,
                     delegates: vec![],
                 };
-                odb.put(connection_prototype_oid.clone(), &connection_prototype);
+                odb.put(connection_prototype_oid, &connection_prototype);
                 odb.set_property(
-                    sys_oid.clone(),
-                    sys_oid.clone(),
+                    sys_oid,
+                    sys_oid,
                     String::from("connection"),
-                    &Value::Obj(connection_prototype_oid.clone()),
+                    &Value::Obj(connection_prototype_oid),
                 );
 
                 // Sys 'log' method.
                 // TODO actually handle proper string arguments etc. here
                 odb.put_verb(
-                    sys_oid.clone(),
+                    sys_oid,
                     String::from("syslog"),
                     &Method {
                         method: Bytes::from(
@@ -172,7 +172,7 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                 // Connection 'receive' method.
                 // TODO actually handle the websocket payload here, etc.
                 odb.put_verb(
-                    connection_prototype_oid.clone(),
+                    connection_prototype_oid,
                     String::from("receive"),
                     &Method {
                         method: Bytes::from(
@@ -192,7 +192,7 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
             // Just a quick test of some of the functions for now.
             let read_obj = |tr| async move {
                 let odb = ObjDBTxHandle::new(&tr);
-                let root_obj = odb.get(sys_oid.clone()).await;
+                let root_obj = odb.get(sys_oid).await;
                 println!("Root Object {:?}", root_obj.unwrap());
 
                 let verbval = odb.find_verb(sys_oid, String::from("syslog")).await;

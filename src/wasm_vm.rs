@@ -25,7 +25,8 @@ impl<'vm_lifetime> VM for WasmVM<'vm_lifetime> {
             .get_typed_func::<i32, (), _>(&mut store, "invoke")
             .expect("Didn't create typed func");
 
-        Ok(verb_func.call(&mut store, 1).unwrap())
+        verb_func.call(&mut store, 1).unwrap();
+        Ok(())
     }
 }
 
@@ -36,7 +37,7 @@ impl<'vm_lifetime> WasmVM<'vm_lifetime> {
 
         let into_func = |_caller: wasmtime::Caller<'_, &WasmVM<'vm_lifetime>>, param: i32| {
             println!("Got {:?} from WebAssembly", param);
-            ()
+            
         };
 
         linker
