@@ -187,8 +187,6 @@ pub struct ObjDBTxHandle<'tx_lifetime> {
     tr: &'tx_lifetime FdbTransaction,
 }
 
-// TODO this should be refactored to use a trait. except traits can't have async functions right
-// now.
 impl<'tx_lifetime> ObjDBTxHandle<'tx_lifetime> {
     pub fn new(
         tx: &'tx_lifetime FdbTransaction,
