@@ -1,7 +1,5 @@
-use futures::channel::mpsc::UnboundedSender;
-use futures::future::BoxFuture;
-use std::error::Error;
-use std::net::SocketAddr;
+use futures::{channel::mpsc::UnboundedSender, future::BoxFuture};
+use std::{error::Error, net::SocketAddr};
 
 use tungstenite::Message;
 

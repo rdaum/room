@@ -1,10 +1,7 @@
 use std::error::Error;
-use wasmtime;
-use wasmtime::Module;
+use wasmtime::{self, Module};
 
-use crate::object::Method;
-use crate::vm::VM;
-use crate::world::World;
+use crate::{object::Method, vm::VM, world::World};
 
 pub struct WasmVM<'vm_lifetime> {
     wasm_engine: wasmtime::Engine,

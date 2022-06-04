@@ -1,13 +1,17 @@
 use assert_str::assert_str_eq;
 use bytes::Bytes;
 
-use fdb::range::RangeOptions;
-use fdb::subspace::Subspace;
-use fdb::transaction::{FdbTransaction, ReadTransaction, Transaction};
-use fdb::tuple::Tuple;
-use fdb::{Key, KeySelector};
-use futures::future::{BoxFuture, FutureExt};
-use futures::StreamExt;
+use fdb::{
+    range::RangeOptions,
+    subspace::Subspace,
+    transaction::{FdbTransaction, ReadTransaction, Transaction},
+    tuple::Tuple,
+    Key, KeySelector,
+};
+use futures::{
+    future::{BoxFuture, FutureExt},
+    StreamExt,
+};
 use int_enum::IntEnum;
 use uuid::Uuid;
 
@@ -35,10 +39,12 @@ impl From<PropDef> for fdb::Key {
 impl From<fdb::Key> for Oid {
     fn from(key: Key) -> Self {
         let oid_subspace = Subspace::new(Bytes::from_static("OID".as_bytes()));
-        let bytes : Bytes = key.into();
+        let bytes: Bytes = key.into();
         assert!(oid_subspace.contains(&bytes));
         let tuple = oid_subspace.unpack(&bytes).unwrap();
-        Oid { id: *tuple.get_uuid_ref(0).unwrap() }
+        Oid {
+            id: *tuple.get_uuid_ref(0).unwrap(),
+        }
     }
 }
 
@@ -54,7 +60,7 @@ impl From<Oid> for fdb::Key {
 impl From<fdb::Key> for PropDef {
     fn from(key: fdb::Key) -> Self {
         let propdef_subspace = Subspace::new(Bytes::from_static("PROPDEF".as_bytes()));
-        let bytes : Bytes = key.into();
+        let bytes: Bytes = key.into();
         assert!(propdef_subspace.contains(&bytes));
         let tuple = propdef_subspace.unpack(&bytes).unwrap();
         PropDef {

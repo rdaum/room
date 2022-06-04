@@ -1,9 +1,7 @@
 use rusty_v8 as v8;
 use std::error::Error;
 
-use crate::object::Method;
-use crate::vm::VM;
-use crate::world::World;
+use crate::{object::Method, vm::VM, world::World};
 use log::info;
 use std::str;
 

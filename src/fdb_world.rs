@@ -7,19 +7,17 @@ use std::{
 };
 
 use bytes::Bytes;
-use fdb::database::FdbDatabase;
-use fdb::transaction::Transaction;
-use fdb::tuple::Tuple;
-use futures::channel::mpsc::UnboundedSender;
-use futures::future::BoxFuture;
-use futures::{FutureExt, SinkExt};
+use fdb::{database::FdbDatabase, transaction::Transaction, tuple::Tuple};
+use futures::{channel::mpsc::UnboundedSender, future::BoxFuture, FutureExt, SinkExt};
 use tungstenite::Message;
 use uuid::Uuid;
 
-use crate::fdb_object::ObjDBTxHandle;
-use crate::object::{Method, Object, Oid, Value};
-use crate::vm::VM;
-use crate::world::World;
+use crate::{
+    fdb_object::ObjDBTxHandle,
+    object::{Method, Object, Oid, Value},
+    vm::VM,
+    world::World,
+};
 
 type PeerMap = Arc<Mutex<HashMap<Oid, (SocketAddr, UnboundedSender<Message>)>>>;
 
