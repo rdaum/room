@@ -1,19 +1,16 @@
-use std::error::Error;
 use rusty_v8 as v8;
-use rusty_v8::SharedRef;
+use std::error::Error;
 
-use std::str;
-use log::info;
+use crate::object::Method;
 use crate::vm::VM;
 use crate::world::World;
-use crate::object::Method;
+use log::info;
+use std::str;
 
-pub struct V8VM {
-
-}
+pub struct V8VM {}
 
 impl VM for V8VM {
-    fn execute_method(&self, method: &Method, world: &dyn World) -> Result<(), Box<dyn Error>> {
+    fn execute_method(&self, method: &Method, _world: &dyn World) -> Result<(), Box<dyn Error>> {
         // TODO Creating this all from scratch each time is dubious from a performance POV.
         // We need a way to stash at least some of this per-connection, or per transaction, or
         // something.
@@ -41,8 +38,6 @@ impl V8VM {
         v8::V8::initialize_platform(platform);
         v8::V8::initialize();
 
-        Box::new(V8VM {
-
-        })
+        Box::new(V8VM {})
     }
 }

@@ -12,10 +12,10 @@ use tungstenite::{Message, Result};
 pub mod fdb_object;
 pub mod fdb_world;
 pub mod object;
+pub mod v8_vm;
 pub mod vm;
 pub mod wasm_vm;
 pub mod world;
-pub mod v8_vm;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
