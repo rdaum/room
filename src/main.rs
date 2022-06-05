@@ -10,7 +10,10 @@ use tungstenite::{Message, Result};
 pub mod fdb_object;
 pub mod fdb_world;
 pub mod object;
+
+#[cfg(feature = "dep:v8_vm")]
 pub mod v8_vm;
+
 pub mod vm;
 pub mod wasm_vm;
 pub mod world;
@@ -22,6 +25,7 @@ struct Args {
     #[clap(short, long, default_value = "127.0.0.1:9002")]
     listen_address: String,
 }
+
 
 async fn handle_message<'world_lifetime>(
     conn_oid: object::Oid,
@@ -91,7 +95,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     env_logger::init();
 
+    #[cfg(feature = "dep:v8_vm")]
     let vm = v8_vm::V8VM::new();
+    #[cfg(not(feature = "dep:v8_vm"))]
+    let vm = wasm_vm::WasmVM::new();
 
     let world = fdb_world::FdbWorld::new(vm);
     match world.initialize().await {
