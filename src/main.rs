@@ -17,6 +17,7 @@ pub mod v8_vm;
 pub mod vm;
 pub mod wasm_vm;
 pub mod world;
+use crate::world::World;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -97,9 +98,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "dep:v8_vm")]
     let vm = v8_vm::V8VM::new();
     #[cfg(not(feature = "dep:v8_vm"))]
-    let vm = wasm_vm::WasmVM::new();
+    let vm = Box::from(wasm_vm::WasmVM::new().unwrap());
+    let world = Arc::new(fdb_world::FdbWorld::new(vm));
 
-    let world = fdb_world::FdbWorld::new(vm);
     match world.initialize().await {
         Ok(()) => {
             info!("World initialized.")

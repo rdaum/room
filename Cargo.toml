@@ -11,6 +11,7 @@ v8_vm = ["dep:rusty_v8"]
 version = "0.8.2"
 
 [dependencies]
+anyhow = "1.0.57"
 wasmtime = "0.37.0"
 futures = "0.3.21"
 tokio = { version = "1", features = ["full"] }

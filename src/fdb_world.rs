@@ -1,3 +1,8 @@
+use crate::object::ObjDBHandle;
+use bytes::Bytes;
+use fdb::{database::FdbDatabase, transaction::Transaction};
+use futures::{channel::mpsc::UnboundedSender, future::BoxFuture, FutureExt, SinkExt, StreamExt};
+use log::error;
 use std::{
     collections::HashMap,
     env,
@@ -5,13 +10,6 @@ use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
-
-use bytes::Bytes;
-use fdb::{database::FdbDatabase, transaction::Transaction};
-use futures::{
-    channel::mpsc::UnboundedSender, future::BoxFuture, FutureExt, SinkExt, StreamExt,
-};
-use log::{error};
 use tungstenite::Message;
 use uuid::Uuid;
 
@@ -33,9 +31,7 @@ pub struct FdbWorld<'world_lifetime> {
 }
 
 impl<'world_lifetime> FdbWorld<'world_lifetime> {
-    pub fn new(
-        vm: Box<dyn VM + 'world_lifetime + Send + Sync>,
-    ) -> Arc<dyn World + Send + Sync + 'world_lifetime> {
+    pub fn new(vm: Box<dyn VM + 'world_lifetime + Send + Sync>) -> Self {
         unsafe {
             fdb::select_api_version(710);
             fdb::start_network();
@@ -43,11 +39,11 @@ impl<'world_lifetime> FdbWorld<'world_lifetime> {
         let fdb_cluster_file = env::var("FDB_CLUSTER_FILE").expect("FDB_CLUSTER_FILE not defined!");
         let fdb_database = fdb::open_database(fdb_cluster_file).expect("Could not open database");
 
-        Arc::new(FdbWorld {
+        FdbWorld {
             vm,
             fdb_database,
             peer_map: Arc::new(Mutex::new(Default::default())),
-        })
+        }
     }
 }
 
@@ -236,24 +232,15 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                 let root_obj = odb.get(sys_oid).await;
                 println!("Root Object {:?}", root_obj.unwrap());
 
-                let props = odb.get_properties(sys_oid);
-                match props {
-                    Ok(p) => {
-                        let c = p.collect::<Vec<PropDef>>().await;
-                        println!("Properties: {:?}", c);
-                    }
-                    Err(_) => {}
+                if let Ok(p) = odb.get_properties(sys_oid) {
+                    let c = p.collect::<Vec<PropDef>>().await;
+                    println!("Properties: {:?}", c);
                 }
 
-                let verbs = odb.get_verbs(sys_oid);
-                match verbs {
-                    Ok(p) => {
-                        let c = p.collect::<Vec<VerbDef>>().await;
-                        println!("Verbs: {:?}", c);
-                    }
-                    Err(_) => {}
+                if let Ok(v) = odb.get_verbs(sys_oid) {
+                    let c = v.collect::<Vec<VerbDef>>().await;
+                    println!("Verbs: {:?}", c);
                 }
-
 
                 let verbval = odb.find_verb(sys_oid, String::from("syslog")).await;
                 println!("Verb: {:?}", verbval);

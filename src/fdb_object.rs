@@ -1,7 +1,6 @@
 use assert_str::assert_str_eq;
 use bytes::Bytes;
 
-
 use fdb::{
     range::RangeOptions,
     subspace::Subspace,
@@ -13,7 +12,6 @@ use futures::future::{BoxFuture, FutureExt};
 use int_enum::IntEnum;
 use log::{error, info};
 use tokio_stream::StreamExt;
-
 
 use crate::object::{
     Method, ObjDBHandle, ObjGetError, Object, Oid, PropDef, PropGetError, Value, ValueType,
@@ -202,10 +200,8 @@ pub struct ObjDBTxHandle<'tx_lifetime> {
 }
 
 impl<'tx_lifetime> ObjDBTxHandle<'tx_lifetime> {
-    pub fn new(
-        tx: &'tx_lifetime FdbTransaction,
-    ) -> Box<dyn ObjDBHandle + Sync + Send + 'tx_lifetime> {
-        Box::new(ObjDBTxHandle { tr: tx })
+    pub fn new(tx: &'tx_lifetime FdbTransaction) -> Self {
+        ObjDBTxHandle { tr: tx }
     }
 }
 
@@ -346,7 +342,8 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
 
     fn get_verbs(
         &self,
-        location: Oid) -> Result<Box<dyn tokio_stream::Stream<Item = VerbDef> + Send + Unpin>, VerbGetError> {
+        location: Oid,
+    ) -> Result<Box<dyn tokio_stream::Stream<Item = VerbDef> + Send + Unpin>, VerbGetError> {
         let verbdef_subspace = Subspace::new(Bytes::from_static("VERBDEF".as_bytes()));
         let mut tup = Tuple::new();
         tup.add_uuid(location.id);
