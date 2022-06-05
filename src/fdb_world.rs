@@ -8,18 +8,20 @@ use std::{
 
 use bytes::Bytes;
 use fdb::{database::FdbDatabase, transaction::Transaction};
-use futures::{channel::mpsc::UnboundedSender, future::BoxFuture, FutureExt, SinkExt};
+use futures::{
+    channel::mpsc::UnboundedSender, future::BoxFuture, FutureExt, SinkExt, StreamExt,
+};
 use log::{error};
 use tungstenite::Message;
 use uuid::Uuid;
 
+use crate::object::{PropDef, VerbDef};
 use crate::{
     fdb_object::ObjDBTxHandle,
     object::{Method, Object, Oid, Value},
     vm::VM,
     world::World,
 };
-
 
 type PeerMap = Arc<Mutex<HashMap<Oid, (SocketAddr, UnboundedSender<Message>)>>>;
 
@@ -232,6 +234,25 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                 let odb = ObjDBTxHandle::new(&tr);
                 let root_obj = odb.get(sys_oid).await;
                 println!("Root Object {:?}", root_obj.unwrap());
+
+                let props = odb.get_properties(sys_oid);
+                match props {
+                    Ok(p) => {
+                        let c = p.collect::<Vec<PropDef>>().await;
+                        println!("Properties: {:?}", c);
+                    }
+                    Err(_) => {}
+                }
+
+                let verbs = odb.get_verbs(sys_oid);
+                match verbs {
+                    Ok(p) => {
+                        let c = p.collect::<Vec<VerbDef>>().await;
+                        println!("Verbs: {:?}", c);
+                    }
+                    Err(_) => {}
+                }
+
 
                 let verbval = odb.find_verb(sys_oid, String::from("syslog")).await;
                 println!("Verb: {:?}", verbval);

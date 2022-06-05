@@ -26,7 +26,6 @@ struct Args {
     listen_address: String,
 }
 
-
 async fn handle_message<'world_lifetime>(
     conn_oid: object::Oid,
     msg: Result<Message>,

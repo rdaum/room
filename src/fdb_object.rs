@@ -1,20 +1,19 @@
 use assert_str::assert_str_eq;
 use bytes::Bytes;
 
+
 use fdb::{
     range::RangeOptions,
     subspace::Subspace,
     transaction::{FdbTransaction, ReadTransaction, Transaction},
     tuple::Tuple,
-    Key, KeySelector,
+    Key,
 };
-use futures::{
-    future::{BoxFuture, FutureExt},
-    StreamExt,
-};
+use futures::future::{BoxFuture, FutureExt};
 use int_enum::IntEnum;
 use log::{error, info};
-use uuid::Uuid;
+use tokio_stream::StreamExt;
+
 
 use crate::object::{
     Method, ObjDBHandle, ObjGetError, Object, Oid, PropDef, PropGetError, Value, ValueType,
@@ -24,17 +23,6 @@ use crate::object::{
 pub trait RangeKey {
     fn list_start_key(location: Oid, definer: Oid) -> Tuple;
     fn list_end_key(location: Oid, definer: Oid) -> Tuple;
-}
-
-impl From<PropDef> for fdb::Key {
-    fn from(propdef: PropDef) -> Self {
-        let propdef_subspace = Subspace::new(Bytes::from_static("PROPDEF".as_bytes()));
-        let mut tup = Tuple::new();
-        tup.add_uuid(propdef.location.id);
-        tup.add_uuid(propdef.definer.id);
-        tup.add_string(propdef.name);
-        propdef_subspace.subspace(&tup).pack().into()
-    }
 }
 
 impl From<fdb::Key> for Oid {
@@ -58,67 +46,54 @@ impl From<Oid> for fdb::Key {
     }
 }
 
+impl From<PropDef> for fdb::Key {
+    fn from(propdef: PropDef) -> Self {
+        let propdef_subspace = Subspace::new(Bytes::from_static("PROPDEF".as_bytes()));
+        let mut tup = Tuple::new();
+        tup.add_uuid(propdef.location.id);
+        tup.add_uuid(propdef.definer.id);
+        tup.add_string(propdef.name);
+        propdef_subspace.subspace(&tup).pack().into()
+    }
+}
+
 impl From<fdb::Key> for PropDef {
     fn from(key: fdb::Key) -> Self {
         let propdef_subspace = Subspace::new(Bytes::from_static("PROPDEF".as_bytes()));
         let bytes: Bytes = key.into();
-        assert!(propdef_subspace.contains(&bytes));
         let tuple = propdef_subspace.unpack(&bytes).unwrap();
         PropDef {
             location: Oid {
-                id: *tuple.get_uuid_ref(1).unwrap(),
+                id: *tuple.get_uuid_ref(0).unwrap(),
             },
             definer: Oid {
-                id: *tuple.get_uuid_ref(2).unwrap(),
+                id: *tuple.get_uuid_ref(1).unwrap(),
             },
-            name: tuple.get_string_ref(0).unwrap().clone(),
+            name: tuple.get_string_ref(2).unwrap().clone(),
         }
-    }
-}
-
-impl RangeKey for PropDef {
-    fn list_start_key(location: Oid, definer: Oid) -> Tuple {
-        let mut tup = Tuple::new();
-        tup.add_string(String::from("PROPDEF"));
-        tup.add_uuid(location.id);
-        tup.add_uuid(definer.id);
-
-        println!("Start: {:?}", tup);
-        tup
-    }
-
-    fn list_end_key(location: Oid, definer: Oid) -> Tuple {
-        let mut tup = Tuple::new();
-        tup.add_string(String::from("PROPDEF"));
-        let increment_location = Uuid::from_u128(location.id.as_u128() + 1);
-        tup.add_uuid(increment_location);
-        tup.add_uuid(definer.id);
-
-        println!("End: {:?}", tup);
-        tup
     }
 }
 
 impl From<VerbDef> for fdb::Key {
     fn from(vd: VerbDef) -> Self {
         let verbdef_subspace = Subspace::new(Bytes::from_static("VERBDEF".as_bytes()));
-
         let mut tup = Tuple::new();
-        tup.add_string(vd.name.clone());
         tup.add_uuid(vd.definer.id);
+        tup.add_string(vd.name);
         verbdef_subspace.subspace(&tup).pack().into()
     }
 }
 
 impl From<fdb::Key> for VerbDef {
     fn from(key: fdb::Key) -> Self {
-        let tuple = Tuple::from_bytes(key).unwrap();
-        assert_str_eq!(tuple.get_string_ref(0).unwrap(), String::from("VERBDEF"));
+        let verbdef_subspace = Subspace::new(Bytes::from_static("VERBDEF".as_bytes()));
+        let bytes: Bytes = key.into();
+        let tuple = verbdef_subspace.unpack(&bytes).unwrap();
         VerbDef {
-            name: tuple.get_string_ref(1).unwrap().clone(),
             definer: Oid {
-                id: *tuple.get_uuid_ref(2).unwrap(),
+                id: *tuple.get_uuid_ref(0).unwrap(),
             },
+            name: tuple.get_string_ref(1).unwrap().clone(),
         }
     }
 }
@@ -251,7 +226,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
                 Err(_) => Err(ObjGetError::DbError()),
             }
         }
-            .boxed()
+        .boxed()
     }
 
     fn put_verb(&self, definer: Oid, name: String, method: &Method) {
@@ -272,10 +247,9 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
                 Err(_) => Err(VerbGetError::DbError()),
             }
         }
-            .boxed()
+        .boxed()
     }
 
-    // TODO does not work, needs debugging.
     fn find_verb(&self, location: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>> {
         // Look locally first.
         async move {
@@ -350,26 +324,39 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
                 Err(_) => Err(PropGetError::DbError()),
             }
         }
-            .boxed()
+        .boxed()
     }
 
-    // TODO does not work. Something wrong with the range query
     fn get_properties(
         &self,
         location: Oid,
-        definer: Oid,
-    ) -> Result<Box<dyn tokio_stream::Stream<Item=PropDef>>, PropGetError> {
-        let start_key = PropDef::list_start_key(location, definer).pack();
-        let end_key = PropDef::list_end_key(location, definer).pack();
-        let ks_start = KeySelector::first_greater_or_equal(start_key);
-        let ks_end = KeySelector::last_less_or_equal(end_key);
-        let range = self.tr.get_range(ks_start, ks_end, RangeOptions::default());
-        println!("Range: {:?}", range);
-        let propdefs = range.map(|kv| -> PropDef {
+    ) -> Result<Box<dyn tokio_stream::Stream<Item = PropDef> + Send + Unpin>, PropGetError> {
+        let propdef_subspace = Subspace::new(Bytes::from_static("PROPDEF".as_bytes()));
+        let mut tup = Tuple::new();
+        tup.add_uuid(location.id);
+        let prop_range = propdef_subspace.range(&tup);
+        let range_stream = prop_range.into_stream(self.tr, RangeOptions::default());
+        let propdefs = range_stream.map(|kv| -> PropDef {
             let key = kv.unwrap().get_key_ref().clone();
 
             PropDef::from(key)
         });
         Ok(Box::new(propdefs))
+    }
+
+    fn get_verbs(
+        &self,
+        location: Oid) -> Result<Box<dyn tokio_stream::Stream<Item = VerbDef> + Send + Unpin>, VerbGetError> {
+        let verbdef_subspace = Subspace::new(Bytes::from_static("VERBDEF".as_bytes()));
+        let mut tup = Tuple::new();
+        tup.add_uuid(location.id);
+        let verb_range = verbdef_subspace.range(&tup);
+        let range_stream = verb_range.into_stream(self.tr, RangeOptions::default());
+        let verbdefs = range_stream.map(|kv| -> VerbDef {
+            let key = kv.unwrap().get_key_ref().clone();
+
+            VerbDef::from(key)
+        });
+        Ok(Box::new(verbdefs))
     }
 }

@@ -122,10 +122,16 @@ pub trait ObjDBHandle {
     /// Find all properties defined on an object
     ///
     /// * `location` what object to get the properties from
-    /// * `definer` what object 'defines' the properties (what verbs they are visible to)
     fn get_properties(
         &self,
         location: Oid,
-        definer: Oid,
-    ) -> Result<Box<dyn tokio_stream::Stream<Item = PropDef>>, PropGetError>;
+    ) -> Result<Box<dyn tokio_stream::Stream<Item = PropDef> + Send + Unpin>, PropGetError>;
+
+    /// Find all verbs defined on an object
+    ///
+    /// * `location` what object to get the properties from
+    fn get_verbs(
+        &self,
+        location: Oid,
+    ) -> Result<Box<dyn tokio_stream::Stream<Item = VerbDef> + Send + Unpin>, VerbGetError>;
 }
