@@ -95,9 +95,9 @@ pub trait ObjDBHandle {
 
     /// Find a verb across the entire ancestry graph for a given object. Depth first search.
     ///
-    /// * `definer` what object to start looking at
+    /// * `location` what object to start looking at
     /// * `name` the name of the verb to look for
-    fn find_verb(&self, definer: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>>;
+    fn find_verb(&self, location: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>>;
 
     /// Set a property on an object
     ///

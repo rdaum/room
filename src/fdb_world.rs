@@ -7,8 +7,9 @@ use std::{
 };
 
 use bytes::Bytes;
-use fdb::{database::FdbDatabase, transaction::Transaction, tuple::Tuple};
+use fdb::{database::FdbDatabase, transaction::Transaction};
 use futures::{channel::mpsc::UnboundedSender, future::BoxFuture, FutureExt, SinkExt};
+use log::{error};
 use tungstenite::Message;
 use uuid::Uuid;
 
@@ -18,6 +19,7 @@ use crate::{
     vm::VM,
     world::World,
 };
+
 
 type PeerMap = Arc<Mutex<HashMap<Oid, (SocketAddr, UnboundedSender<Message>)>>>;
 
@@ -74,13 +76,13 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                                 oid: new_oid,
                                 delegates: vec![conn_oid],
                             };
-                            odb.put(conn_oid, &conn_obj);
-                            Ok(())
+                            odb.put(new_oid, &conn_obj);
                         }
                         v => {
                             panic!("Could not get connection proto OID, got {:?} instead", v);
                         }
                     }
+                    Ok(())
                 })
                 .await
                 .expect("Could not create connection object");
@@ -94,9 +96,7 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
             self.peer_map.lock().unwrap().remove(&oid);
             self.fdb_database
                 .run(|tr| async move {
-                    let mut oid_tup = Tuple::new();
-                    oid_tup.add_uuid(oid.id);
-                    tr.clear(oid_tup.pack());
+                    tr.clear(oid);
                     Ok(())
                 })
                 .await
@@ -114,10 +114,16 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                     let odb = ObjDBTxHandle::new(&tr);
 
                     let verbval = odb.find_verb(connection, String::from("receive")).await;
-                    println!("Receive verb: {:?}", verbval);
-                    self.vm
-                        .execute_method(&verbval.unwrap(), self)
-                        .expect("Couldn't invoke receive method");
+                    match verbval {
+                        Ok(v) => {
+                            self.vm
+                                .execute_method(&v, self)
+                                .expect("Couldn't invoke receive method");
+                        }
+                        Err(e) => {
+                            error!("Receive verb not found: {:?}", e);
+                        }
+                    }
                     Ok(())
                 })
                 .await
@@ -191,7 +197,11 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                     String::from("syslog"),
                     &Method {
                         method: Bytes::from(
-                            r#"console.log("hi");
+                            r#"(module
+                            (import "host" "log" (func $host/log (param i32)))
+                            (func $log (param $0 i32) get_local $0 (call $host/log))
+                            (export "invoke" (func $log))
+                            )
     "#,
                         ),
                     },
@@ -204,7 +214,11 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                     String::from("receive"),
                     &Method {
                         method: Bytes::from(
-                            r#"console.log("hi");
+                            r#"(module
+                            (import "host" "log" (func $host/log (param i32)))
+                            (func $log (param $0 i32) get_local $0 (call $host/log))
+                            (export "invoke" (func $log))
+                            )
     "#,
                         ),
                     },

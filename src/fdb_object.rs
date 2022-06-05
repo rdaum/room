@@ -13,6 +13,7 @@ use futures::{
     StreamExt,
 };
 use int_enum::IntEnum;
+use log::{error, info};
 use uuid::Uuid;
 
 use crate::object::{
@@ -187,18 +188,18 @@ impl From<fdb::Value> for Method {
 
 impl From<fdb::Value> for Object {
     fn from(bytes: fdb::Value) -> Self {
-        let tuple = Tuple::from_bytes(bytes).unwrap();
-        assert_str_eq!(tuple.get_string_ref(0).unwrap(), String::from("OBJECT"));
+        let object_subspace = Subspace::new(Bytes::from_static("OBJECT".as_bytes()));
+        let tuple = object_subspace.unpack(&bytes.into()).unwrap();
         let mut obj = Object {
             oid: Oid {
-                id: *tuple.get_uuid_ref(1).unwrap(),
+                id: *tuple.get_uuid_ref(0).unwrap(),
             },
             delegates: vec![],
         };
-        let mut offset = 2;
+        let mut offset = 1;
         let num_delegates = tuple.get_i32(offset).unwrap();
         offset += 1;
-        for _delegate_num in 1..num_delegates {
+        for _delegate_num in 0..num_delegates {
             let delegate_id = tuple.get_uuid_ref(offset).unwrap();
             obj.delegates.push(Oid { id: *delegate_id });
             offset += 1;
@@ -209,14 +210,14 @@ impl From<fdb::Value> for Object {
 
 impl From<&Object> for fdb::Value {
     fn from(o: &Object) -> Self {
+        let object_subspace = Subspace::new(Bytes::from_static("OBJECT".as_bytes()));
         let mut tup = Tuple::new();
-        tup.add_string(String::from("OBJECT"));
         tup.add_uuid(o.oid.id);
         tup.add_i32(o.delegates.len() as i32);
         for delegate in o.delegates.iter() {
             tup.add_uuid(delegate.id);
         }
-        tup.pack().into()
+        object_subspace.subspace(&tup).pack().into()
     }
 }
 
@@ -250,7 +251,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
                 Err(_) => Err(ObjGetError::DbError()),
             }
         }
-        .boxed()
+            .boxed()
     }
 
     fn put_verb(&self, definer: Oid, name: String, method: &Method) {
@@ -271,46 +272,51 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
                 Err(_) => Err(VerbGetError::DbError()),
             }
         }
-        .boxed()
+            .boxed()
     }
 
     // TODO does not work, needs debugging.
-    fn find_verb(&self, definer: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>> {
+    fn find_verb(&self, location: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>> {
         // Look locally first.
         async move {
-            let local_look = self.get_verb(definer, name.clone()).await;
+            let local_look = self.get_verb(location, name.clone()).await;
 
             match local_look {
                 Ok(r) => Ok(r),
-
                 Err(e) if e == VerbGetError::DoesNotExist() => {
                     // Get delegates list.
-                    let o_look = self.get(definer).await;
-                    match o_look {
-                        Ok(o) => {
-                            // Depth first search up delegate tree.
-                            for delegate in o.delegates {
-                                // TODO possible to do this in parallel. Explore. Probably not much
-                                // value since more than 1 delegate would be rare.
-                                match self.find_verb(delegate, name.clone()).await {
-                                    Ok(o) => return Ok(o),
-                                    Err(e) if e == VerbGetError::DoesNotExist() => continue,
-                                    Err(e) => return Err(e),
-                                }
-                            }
-                            Err(VerbGetError::DoesNotExist())
-                        }
+                    let o_look = self.get(location).await;
+                    let delegates = match o_look {
+                        Ok(o) => { o.delegates }
                         Err(e) => match e {
-                            ObjGetError::DbError() => Err(VerbGetError::DbError()),
-                            ObjGetError::DoesNotExist() => Err(VerbGetError::Internal),
-                        },
+                            ObjGetError::DbError() => {
+                                error!("Unable to retrieve object to retrieve delegates list due db error: {:?}", e);
+                                return Err(VerbGetError::DbError());
+                            }
+                            ObjGetError::DoesNotExist() => {
+                                error!("Unable to retrieve object to retrieve delegates list due to invalid delegate ({:?}): {:?}", location, e);
+                                vec![]
+                            }
+                        }
+                    };
+
+                    info!("Delegates for obj {:?} == {:?}", location, delegates);
+
+                    // Depth first search up delegate tree.
+                    for delegate in delegates {
+                        match self.find_verb(delegate, name.clone()).await {
+                            Ok(o) => return Ok(o),
+                            Err(e) if e == VerbGetError::DoesNotExist() => continue,
+                            Err(e) => return Err(e),
+                        }
                     }
+                    Err(VerbGetError::DoesNotExist())
                 }
 
                 Err(e) => Err(e),
             }
         }
-        .boxed()
+            .boxed()
     }
 
     fn set_property(&self, location: Oid, definer: Oid, name: String, value: &Value) {
@@ -344,7 +350,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
                 Err(_) => Err(PropGetError::DbError()),
             }
         }
-        .boxed()
+            .boxed()
     }
 
     // TODO does not work. Something wrong with the range query
@@ -352,7 +358,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
         &self,
         location: Oid,
         definer: Oid,
-    ) -> Result<Box<dyn tokio_stream::Stream<Item = PropDef>>, PropGetError> {
+    ) -> Result<Box<dyn tokio_stream::Stream<Item=PropDef>>, PropGetError> {
         let start_key = PropDef::list_start_key(location, definer).pack();
         let end_key = PropDef::list_end_key(location, definer).pack();
         let ks_start = KeySelector::first_greater_or_equal(start_key);
