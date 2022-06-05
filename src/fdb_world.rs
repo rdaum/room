@@ -120,6 +120,7 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                         Ok(v) => {
                             self.vm
                                 .execute_method(&v, self)
+                                .await
                                 .expect("Couldn't invoke receive method");
                         }
                         Err(e) => {
@@ -258,6 +259,7 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                 println!("Verb: {:?}", verbval);
                 self.vm
                     .execute_method(&verbval.unwrap(), self)
+                    .await
                     .expect("Could not execute method");
 
                 Ok(())
