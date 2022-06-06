@@ -2,9 +2,11 @@ use anyhow::Error;
 use std::sync::Arc;
 
 use futures::future::{BoxFuture, FutureExt};
-use rmp_serde::Serializer;
+use log::info;
+use rmp_serde::{Serializer};
 use serde::Serialize;
-use wasmtime::{self, Module};
+use wasmtime::{self, Extern, Module};
+use wasmtime::Extern::Func;
 
 use crate::{object::Method, object::Value, vm::VM, world::World};
 
@@ -73,11 +75,27 @@ impl<'vm_lifetime> WasmVM<'vm_lifetime> {
         config.consume_fuel(true);
 
         let engine = wasmtime::Engine::new(&config)?;
-        let mut linker: wasmtime::Linker<&WasmVM> = wasmtime::Linker::new(&engine);
+        let mut linker = wasmtime::Linker::new(&engine);
 
-        let into_func = |_caller: wasmtime::Caller<'_, &WasmVM>, param: i32| {
-            println!("Got {:?} from WebAssembly", param);
+        let into_func = move |mut caller: wasmtime::Caller<'_, &WasmVM>, param: i32| {
+            let mem = caller.get_export("memory").unwrap();
+            match mem {
+                Func(_) => {}
+                Extern::Global(_) => {}
+                Extern::Table(_) => {}
+                Extern::Memory(mem) => {
+                    let stack_end = param as usize;
+                    let mut buffer: Vec<u8> = vec![0; stack_end as usize];
+                    mem.read(&caller, 0, &mut buffer).unwrap();
+                    let result : Value = rmp_serde::from_slice(buffer.as_slice()).unwrap();
+                    info!("Log: {:?}", result);
+                }
+            }
+
+
+            Ok(())
         };
+
 
         linker
             .func_wrap("host", "log", into_func)
