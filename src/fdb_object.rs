@@ -96,9 +96,8 @@ impl From<fdb::Key> for VerbDef {
     }
 }
 
-impl From<fdb::Value> for Value {
-    fn from(value: fdb::Value) -> Self {
-        let tuple = Tuple::from_bytes(value).unwrap();
+impl From<&Tuple> for Value {
+    fn from(tuple: &Tuple) -> Self {
         assert_str_eq!(tuple.get_string_ref(0).unwrap(), String::from("VALUE"));
         let type_val_idx = tuple.get_i8(1).unwrap();
 
@@ -116,11 +115,28 @@ impl From<fdb::Value> for Value {
                 let oid = tuple.get_uuid_ref(2).unwrap();
                 Value::Obj(Oid { id: *oid })
             }
+            ValueType::List => {
+                let size: usize = tuple.get_i32(2).unwrap() as usize;
+                let mut l_val: Vec<Value> = vec![];
+                for n in 0..size {
+                    let t = tuple.get_tuple_ref((3 as usize) + n).unwrap();
+                    let v: Value = t.into();
+                    l_val.push(v);
+                }
+                Value::List(l_val)
+            }
         }
     }
 }
 
-impl From<&Value> for fdb::Value {
+impl From<fdb::Value> for Value {
+    fn from(value: fdb::Value) -> Self {
+        let tuple = &Tuple::from_bytes(value).unwrap();
+        tuple.into()
+    }
+}
+
+impl From<&Value> for Tuple {
     fn from(value: &Value) -> Self {
         let mut tup = Tuple::new();
         tup.add_string(String::from("VALUE"));
@@ -137,7 +153,22 @@ impl From<&Value> for fdb::Value {
                 tup.add_i8(ValueType::Obj as i8);
                 tup.add_uuid(u.id);
             }
+            Value::List(v) => {
+                tup.add_i8(ValueType::List as i8);
+                tup.add_i32(v.len() as i32);
+                for i in v {
+                    let tuple: Tuple = i.into();
+                    tup.add_tuple(tuple);
+                }
+            }
         }
+        tup
+    }
+}
+
+impl From<&Value> for fdb::Value {
+    fn from(value: &Value) -> Self {
+        let tup: Tuple = value.into();
         tup.pack().into()
     }
 }

@@ -1,8 +1,9 @@
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use int_enum::IntEnum;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Oid {
     pub id: uuid::Uuid,
 }
@@ -16,18 +17,20 @@ pub struct PropDef {
 }
 
 #[repr(i8)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, IntEnum)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq, IntEnum)]
 pub enum ValueType {
     String = 0,
     Number = 1,
     Obj = 2,
+    List = 3,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum Value {
     String(String),
     Number(f64),
     Obj(Oid),
+    List(Vec<Value>),
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
