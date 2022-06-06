@@ -23,6 +23,7 @@ pub enum ValueType {
     Number = 1,
     Obj = 2,
     List = 3,
+    Binary = 4,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -31,6 +32,7 @@ pub enum Value {
     Number(f64),
     Obj(Oid),
     List(Vec<Value>),
+    Binary(Vec<u8>),
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

@@ -2,9 +2,11 @@ use anyhow::Error;
 use std::sync::Arc;
 
 use futures::future::{BoxFuture, FutureExt};
+use rmp_serde::Serializer;
+use serde::Serialize;
 use wasmtime::{self, Module};
 
-use crate::{object::Method, vm::VM, world::World};
+use crate::{object::Method, object::Value, vm::VM, world::World};
 
 pub struct WasmVM<'vm_lifetime> {
     wasm_engine: wasmtime::Engine,
@@ -16,8 +18,16 @@ impl<'vm_lifetime> VM for WasmVM<'vm_lifetime> {
         &self,
         method: &Method,
         _world: &(dyn World + Send + Sync),
+        args: &Value,
     ) -> BoxFuture<Result<(), anyhow::Error>> {
+        // Copy the method program before entering the closure.
         let bytes = method.method.clone();
+
+        // Messagepack the arguments to pass through.
+        let mut args_buf = Vec::new();
+        args.serialize(&mut Serializer::new(&mut args_buf))
+            .expect("Unable to serialize arguments");
+
         async move {
             let mut store = wasmtime::Store::new(&self.wasm_engine, self);
 
@@ -32,11 +42,22 @@ impl<'vm_lifetime> VM for WasmVM<'vm_lifetime> {
                 .instantiate_async(&mut store, &module)
                 .await?;
 
+            // Fill module's memory offset 0 with the serialized arguments.
+            let memory = &instance
+                .get_memory(&mut store, "memory")
+                .expect("expected memory not found");
+            memory
+                .write(&mut store, 0, args_buf.as_slice())
+                .expect("Could not write argument memory");
+
             let verb_func = instance
                 .get_typed_func::<i32, (), _>(&mut store, "invoke")
                 .expect("Didn't create typed func");
 
-            verb_func.call_async(&mut store, 1).await?;
+            // Invocation argument is the length of the arguments in memory.
+            verb_func
+                .call_async(&mut store, args_buf.len() as i32)
+                .await?;
             Ok(())
         }
         .boxed()

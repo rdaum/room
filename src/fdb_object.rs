@@ -119,11 +119,15 @@ impl From<&Tuple> for Value {
                 let size: usize = tuple.get_i32(2).unwrap() as usize;
                 let mut l_val: Vec<Value> = vec![];
                 for n in 0..size {
-                    let t = tuple.get_tuple_ref((3 as usize) + n).unwrap();
+                    let t = tuple.get_tuple_ref(3_usize + n).unwrap();
                     let v: Value = t.into();
                     l_val.push(v);
                 }
                 Value::List(l_val)
+            }
+            ValueType::Binary => {
+                let bytes = tuple.get_bytes_ref(2).unwrap();
+                Value::Binary(bytes.to_vec())
             }
         }
     }
@@ -160,6 +164,9 @@ impl From<&Value> for Tuple {
                     let tuple: Tuple = i.into();
                     tup.add_tuple(tuple);
                 }
+            }
+            Value::Binary(b) => {
+                tup.add_bytes(Bytes::from(b.clone()));
             }
         }
         tup

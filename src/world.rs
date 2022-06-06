@@ -1,13 +1,15 @@
 use futures::{channel::mpsc::UnboundedSender, future::BoxFuture};
-use std::{error::Error, net::SocketAddr};
+use std::net::SocketAddr;
 
+use anyhow::Error;
+use bytes::Bytes;
 use tungstenite::Message;
 
 use crate::object::Oid;
 
 pub trait World {
     /// Initialize the world, getting it ready for use.
-    fn initialize(&self) -> BoxFuture<Result<(), Box<dyn Error>>>;
+    fn initialize(&self) -> BoxFuture<Result<(), Error>>;
 
     /// Notify the world of an inbound websocket connection and return the Oid for its connection.
     ///
@@ -17,22 +19,22 @@ pub trait World {
         &self,
         sender: UnboundedSender<Message>,
         address: SocketAddr,
-    ) -> BoxFuture<Result<Oid, Box<dyn Error>>>;
+    ) -> BoxFuture<Result<Oid, Error>>;
 
     /// Notify the world that a websocket connection has disconnected.
     ///
     /// * `oid` the connection object associated with the disconnected session
-    fn disconnect(&self, oid: Oid) -> BoxFuture<Result<(), Box<dyn Error>>>;
+    fn disconnect(&self, oid: Oid) -> BoxFuture<Result<(), Error>>;
 
     /// Notify the world that an inbound websocket message has been received for a given connection.
     ///
     /// * `connection` the connection object associated with the websocket that sent the messages
     /// * `message` the inbound message
-    fn receive(&self, connection: Oid, message: Message) -> BoxFuture<Result<(), Box<dyn Error>>>;
+    fn receive(&self, connection: Oid, message: Bytes) -> BoxFuture<Result<(), Error>>;
 
     /// Send a websocket message to a connection
     ///
     /// * `connection` the oid of the connection object to send the message to, if connected
     /// * `message` the message to send
-    fn send(&self, connection: Oid, message: Message) -> BoxFuture<Result<(), Box<dyn Error>>>;
+    fn send(&self, connection: Oid, message: Message) -> BoxFuture<Result<(), Error>>;
 }

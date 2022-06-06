@@ -1,4 +1,5 @@
 use crate::object::ObjDBHandle;
+use anyhow::Error;
 use bytes::Bytes;
 use fdb::{database::FdbDatabase, transaction::Transaction};
 use futures::{channel::mpsc::UnboundedSender, future::BoxFuture, FutureExt, SinkExt, StreamExt};
@@ -6,7 +7,6 @@ use log::error;
 use std::{
     collections::HashMap,
     env,
-    error::Error,
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
@@ -52,7 +52,7 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
         &self,
         sender: UnboundedSender<Message>,
         address: SocketAddr,
-    ) -> BoxFuture<Result<Oid, Box<dyn Error>>> {
+    ) -> BoxFuture<Result<Oid, Error>> {
         async move {
             let new_oid = Oid { id: Uuid::new_v4() };
             self.peer_map
@@ -89,7 +89,7 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
         .boxed()
     }
 
-    fn disconnect(&self, oid: Oid) -> BoxFuture<Result<(), Box<dyn Error>>> {
+    fn disconnect(&self, oid: Oid) -> BoxFuture<Result<(), Error>> {
         async move {
             self.peer_map.lock().unwrap().remove(&oid);
             self.fdb_database
@@ -104,18 +104,19 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
         .boxed()
     }
 
-    fn receive(&self, connection: Oid, _message: Message) -> BoxFuture<Result<(), Box<dyn Error>>> {
+    fn receive(&self, connection: Oid, message: Bytes) -> BoxFuture<Result<(), Error>> {
         async move {
-            // Invoke "receive" method on the system object with the connection object
+            let m = &message.clone();
             self.fdb_database
                 .run(|tr| async move {
                     let odb = ObjDBTxHandle::new(&tr);
-
                     let verbval = odb.find_verb(connection, String::from("receive")).await;
                     match verbval {
                         Ok(v) => {
+                            // Invoke "receive" method on the system object with the connection object
+                            let message_val = Value::List(vec![Value::Binary(m.to_vec())]);
                             self.vm
-                                .execute_method(&v, self)
+                                .execute_method(&v, self, &message_val)
                                 .await
                                 .expect("Couldn't invoke receive method");
                         }
@@ -132,7 +133,7 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
         .boxed()
     }
 
-    fn send(&self, connection: Oid, message: Message) -> BoxFuture<Result<(), Box<dyn Error>>> {
+    fn send(&self, connection: Oid, message: Message) -> BoxFuture<Result<(), Error>> {
         let peer_map = self.peer_map.lock().unwrap();
         let (_socket_addr, tx) = &peer_map.get(&connection).unwrap();
         let mut tx = tx.clone();
@@ -145,7 +146,7 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
         .boxed()
     }
 
-    fn initialize(&self) -> BoxFuture<Result<(), Box<dyn Error>>> {
+    fn initialize(&self) -> BoxFuture<Result<(), Error>> {
         async move {
             let sys_oid = Oid { id: Uuid::nil() };
 
@@ -198,6 +199,8 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                         method: Bytes::from(
                             r#"(module
                             (import "host" "log" (func $host/log (param i32)))
+                            (memory $mem 1)
+                            (export "memory" (memory $mem))
                             (func $log (param $0 i32) get_local $0 (call $host/log))
                             (export "invoke" (func $log))
                             )
@@ -215,6 +218,8 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                         method: Bytes::from(
                             r#"(module
                             (import "host" "log" (func $host/log (param i32)))
+                            (memory $mem 1)
+                            (export "memory" (memory $mem))
                             (func $log (param $0 i32) get_local $0 (call $host/log))
                             (export "invoke" (func $log))
                             )
@@ -244,8 +249,10 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
 
                 let verbval = odb.find_verb(sys_oid, String::from("syslog")).await;
                 println!("Verb: {:?}", verbval);
+                let args = Value::List(vec![]);
+
                 self.vm
-                    .execute_method(&verbval.unwrap(), self)
+                    .execute_method(&verbval.unwrap(), self, &args)
                     .await
                     .expect("Could not execute method");
 

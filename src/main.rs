@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use clap::Parser;
 use futures::{future, pin_mut, StreamExt};
 use futures_channel::mpsc::unbounded;
@@ -17,6 +18,7 @@ pub mod v8_vm;
 pub mod vm;
 pub mod wasm_vm;
 pub mod world;
+
 use crate::world::World;
 
 #[derive(Parser, Debug)]
@@ -35,8 +37,11 @@ async fn handle_message<'world_lifetime>(
     match msg {
         Ok(m) => {
             if m.is_text() || m.is_binary() {
+                // Consume message and pass off to receive..
+                let message = Bytes::from(m.into_data());
+
                 world
-                    .receive(conn_oid, m)
+                    .receive(conn_oid, message)
                     .await
                     .expect("Could not receive message");
             }
