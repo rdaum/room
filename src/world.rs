@@ -2,7 +2,7 @@ use crate::object::{ObjDBHandle};
 use anyhow::Error;
 use bytes::Bytes;
 use fdb::{database::FdbDatabase, transaction::Transaction};
-use futures::{channel::mpsc::UnboundedSender, future::BoxFuture, FutureExt, SinkExt};
+use futures::{channel::mpsc::UnboundedSender, SinkExt};
 use log::error;
 use std::{
     collections::HashMap,

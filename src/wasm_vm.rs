@@ -2,13 +2,13 @@ use anyhow::Error;
 use std::sync::Arc;
 
 use futures::future::{BoxFuture, FutureExt};
-use futures::lock::Mutex;
+
 use log::info;
 use rmp_serde::{Serializer};
 use serde::Serialize;
 use wasmtime::{self, Extern, Module};
 use wasmtime::Extern::Func;
-use wasmtime_wasi::sync::WasiCtxBuilder;
+
 
 use crate::{object::Program, object::Value, vm::VM};
 use crate::world::World;
