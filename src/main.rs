@@ -12,9 +12,6 @@ pub mod fdb_object;
 pub mod fdb_world;
 pub mod object;
 
-#[cfg(feature = "dep:v8_vm")]
-pub mod v8_vm;
-
 pub mod vm;
 pub mod wasm_vm;
 pub mod world;
@@ -100,9 +97,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     env_logger::init();
 
-    #[cfg(feature = "dep:v8_vm")]
-    let vm = v8_vm::V8VM::new();
-    #[cfg(not(feature = "dep:v8_vm"))]
     let vm = Box::from(wasm_vm::WasmVM::new().unwrap());
     let world = Arc::new(fdb_world::FdbWorld::new(vm));
 
