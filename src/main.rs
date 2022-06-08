@@ -7,16 +7,14 @@ use std::{error::Error, net::SocketAddr, sync::Arc};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::accept_async;
 use tungstenite::{Message, Result};
+use crate::world::{register_connection, disconnect, initialize_world, receive_connection_message};
 
 pub mod fdb_object;
-pub mod fdb_world;
+pub mod world;
 pub mod object;
 
 pub mod vm;
 pub mod wasm_vm;
-pub mod world;
-
-use crate::world::World;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -26,10 +24,10 @@ struct Args {
     listen_address: String,
 }
 
-async fn handle_message<'world_lifetime>(
+async fn handle_message(
     conn_oid: object::Oid,
     msg: Result<Message>,
-    world: Arc<dyn world::World + Send + Sync + 'world_lifetime>,
+    world:  Arc<world::World>,
 ) {
     match msg {
         Ok(m) => {
@@ -37,8 +35,7 @@ async fn handle_message<'world_lifetime>(
                 // Consume message and pass off to receive..
                 let message = Bytes::from(m.into_data());
 
-                world
-                    .receive(conn_oid, message)
+                receive_connection_message(&world, conn_oid, message)
                     .await
                     .expect("Could not receive message");
             }
@@ -46,8 +43,7 @@ async fn handle_message<'world_lifetime>(
         Err(e) => match e {
             tungstenite::Error::Protocol(_) | tungstenite::Error::ConnectionClosed => {
                 error!("Closed, deleting {:?}", conn_oid);
-                world
-                    .disconnect(conn_oid)
+                    disconnect(world, conn_oid)
                     .await
                     .expect("Unable to destroy connection object");
             }
@@ -56,18 +52,16 @@ async fn handle_message<'world_lifetime>(
     }
 }
 
-async fn handle_connection<'world_lifetime>(
+async fn handle_connection(
     peer: SocketAddr,
     stream: TcpStream,
-    world: Arc<dyn world::World + Send + Sync + 'world_lifetime>,
+    world: Arc<world::World>,
 ) -> tungstenite::Result<()> {
     let ws_stream = accept_async(stream).await.expect("Failed to accept");
 
     // Create an unbounded channel stream from tx->rx and let the world own the tx.
     let (tx, rx) = unbounded();
-    let conn_oid = world
-        .clone()
-        .connect(tx, peer)
+    let conn_oid = register_connection(world.clone(), tx, peer)
         .await
         .expect("Failed to create connection object");
     info!("New WebSocket connection: {} to OID {:?}", peer, conn_oid);
@@ -98,9 +92,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
 
     let vm = Box::from(wasm_vm::WasmVM::new().unwrap());
-    let world = Arc::new(fdb_world::FdbWorld::new(vm));
+    let world = Arc::new(world::World::new(vm));
 
-    match world.initialize().await {
+    match initialize_world(world.clone()).await {
         Ok(()) => {
             info!("World initialized.")
         }

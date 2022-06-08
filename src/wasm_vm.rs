@@ -2,24 +2,33 @@ use anyhow::Error;
 use std::sync::Arc;
 
 use futures::future::{BoxFuture, FutureExt};
+use futures::lock::Mutex;
 use log::info;
 use rmp_serde::{Serializer};
 use serde::Serialize;
 use wasmtime::{self, Extern, Module};
 use wasmtime::Extern::Func;
+use wasmtime_wasi::sync::WasiCtxBuilder;
 
-use crate::{object::Program, object::Value, vm::VM, world::World};
+use crate::{object::Program, object::Value, vm::VM};
+use crate::world::World;
 
 pub struct WasmVM<'vm_lifetime> {
     wasm_engine: wasmtime::Engine,
-    wasm_linker: Arc<wasmtime::Linker<&'vm_lifetime WasmVM<'vm_lifetime>>>,
+    wasm_linker: Arc<wasmtime::Linker<VMState<'vm_lifetime>>>,
+}
+
+struct VMState<'vm_lifetime> {
+    wasi: wasmtime_wasi::WasiCtx,
+    vm: &'vm_lifetime WasmVM<'vm_lifetime>,
+    world: Arc<World>
 }
 
 impl<'vm_lifetime> VM for WasmVM<'vm_lifetime> {
     fn execute(
         &self,
         method: &Program,
-        _world: &(dyn World + Send + Sync),
+        world:  Arc<World>,
         args: &Value,
     ) -> BoxFuture<Result<(), anyhow::Error>> {
         // Copy the method program before entering the closure.
@@ -31,7 +40,15 @@ impl<'vm_lifetime> VM for WasmVM<'vm_lifetime> {
             .expect("Unable to serialize arguments");
 
         async move {
-            let mut store = wasmtime::Store::new(&self.wasm_engine, self);
+            let state = VMState {
+                wasi:  wasmtime_wasi::WasiCtxBuilder::new()
+                    .inherit_stdio()
+                    .inherit_args()?
+                    .build(),
+                vm: self,
+                world: world.clone()
+            };
+            let mut store = wasmtime::Store::new(&self.wasm_engine, state);
 
             // WebAssembly execution will be paused for an async yield every time it
             // consumes 10000 fuel. Fuel will be refilled u64::MAX times.
@@ -77,7 +94,9 @@ impl<'vm_lifetime> WasmVM<'vm_lifetime> {
         let engine = wasmtime::Engine::new(&config)?;
         let mut linker = wasmtime::Linker::new(&engine);
 
-        let into_func = move |mut caller: wasmtime::Caller<'_, &WasmVM>, param: i32| {
+        wasmtime_wasi::add_to_linker(&mut linker, |state: &mut VMState| &mut state.wasi)?;
+
+        let into_func = move |mut caller: wasmtime::Caller<'_, VMState>, param: i32| {
             let mem = caller.get_export("memory").unwrap();
             match mem {
                 Func(_) => {}
