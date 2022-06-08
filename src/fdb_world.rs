@@ -1,8 +1,8 @@
-use crate::object::ObjDBHandle;
+use crate::object::{ObjDBHandle};
 use anyhow::Error;
 use bytes::Bytes;
 use fdb::{database::FdbDatabase, transaction::Transaction};
-use futures::{channel::mpsc::UnboundedSender, future::BoxFuture, FutureExt, SinkExt, StreamExt};
+use futures::{channel::mpsc::UnboundedSender, future::BoxFuture, FutureExt, SinkExt};
 use log::error;
 use std::{
     collections::HashMap,
@@ -13,10 +13,10 @@ use std::{
 use tungstenite::Message;
 use uuid::Uuid;
 
-use crate::object::{PropDef, VerbDef};
+
 use crate::{
     fdb_object::ObjDBTxHandle,
-    object::{Method, Object, Oid, Value},
+    object::{Program, Oid, Value},
     vm::VM,
     world::World,
 };
@@ -59,31 +59,6 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                 .lock()
                 .unwrap()
                 .insert(new_oid, (address, sender));
-            self.fdb_database
-                .run(|tr| async move {
-                    let odb = ObjDBTxHandle::new(&tr);
-                    let sys_oid = Oid { id: Uuid::nil() };
-                    let connection_proto = odb
-                        .get_property(sys_oid, sys_oid, String::from("connection"))
-                        .await
-                        .expect("Unable to get connection proto");
-
-                    match connection_proto {
-                        Value::Obj(conn_oid) => {
-                            let conn_obj = Object {
-                                oid: new_oid,
-                                delegates: vec![conn_oid],
-                            };
-                            odb.put(new_oid, &conn_obj);
-                        }
-                        v => {
-                            panic!("Could not get connection proto OID, got {:?} instead", v);
-                        }
-                    }
-                    Ok(())
-                })
-                .await
-                .expect("Could not create connection object");
             Ok(new_oid)
         }
         .boxed()
@@ -110,20 +85,29 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
             self.fdb_database
                 .run(|tr| async move {
                     let odb = ObjDBTxHandle::new(&tr);
-                    let verbval = odb.find_verb(connection, String::from("receive")).await;
-                    match verbval {
-                        Ok(v) => {
-                            // Invoke "receive" method on the system object with the connection object
-                            let message_val = Value::List(vec![Value::Binary(m.to_vec())]);
-                            self.vm
-                                .execute_method(&v, self, &message_val)
-                                .await
-                                .expect("Couldn't invoke receive method");
+                    let sys_oid = Oid { id: Uuid::nil() };
+                    match odb.get_slot(sys_oid, sys_oid, String::from("receive")).await {
+                        Ok(sv) => {
+                            // Invoke "receive" program with connection obj and message as arguments.
+                            let message_val = Value::Vector(vec![Value::IdKey(connection), Value::Binary(m.to_vec())]);
+
+                            match sv {
+                                Value::Program(p) => {
+                                    self.vm
+                                        .execute(&p, self, &message_val)
+                                        .await
+                                        .expect("Couldn't invoke receive method");
+                                }
+                                _ => {
+                                    error!("'receive' not a Program: {:?}", message_val)
+                                }
+                            }
                         }
-                        Err(e) => {
-                            error!("Receive verb not found: {:?}", e);
+
+                        Err(r) => {
+                            error!("Receive program not found: {:?}", r)
                         }
-                    }
+                    };
                     Ok(())
                 })
                 .await
@@ -151,52 +135,15 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
             let sys_oid = Oid { id: Uuid::nil() };
 
             let bootstrap_objects = |tr| async move {
-                // Create root object.
-                let root_oid = Oid { id: Uuid::new_v4() };
-                let bootstrap_root = Object {
-                    oid: root_oid,
-                    delegates: vec![],
-                };
                 let odb = ObjDBTxHandle::new(&tr);
-
-                odb.put(root_oid, &bootstrap_root);
-
-                // Create the sys object as a child of it.
-                let bootstrap_sys = Object {
-                    oid: sys_oid,
-                    delegates: vec![root_oid],
-                };
-                odb.put(sys_oid, &bootstrap_sys);
-
-                // Attach a reference to 'root' onto the sys object.
-                odb.set_property(
-                    sys_oid,
-                    sys_oid,
-                    String::from("root"),
-                    &Value::Obj(root_oid),
-                );
-
-                // Then create connection prototype.
-                let connection_prototype_oid = Oid { id: Uuid::new_v4() };
-                let connection_prototype = Object {
-                    oid: connection_prototype_oid,
-                    delegates: vec![],
-                };
-                odb.put(connection_prototype_oid, &connection_prototype);
-                odb.set_property(
-                    sys_oid,
-                    sys_oid,
-                    String::from("connection"),
-                    &Value::Obj(connection_prototype_oid),
-                );
 
                 // Sys 'log' method.
                 // TODO actually handle proper string arguments etc. here
-                odb.put_verb(
+                odb.set_slot(
+                    sys_oid,
                     sys_oid,
                     String::from("syslog"),
-                    &Method {
-                        method: Bytes::from(
+                    &Value::Program(Program::from(String::from(
                             r#"(module
                             (import "host" "log" (func $host/log (param i32)))
                             (memory $mem 1)
@@ -205,17 +152,15 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                             (export "invoke" (func $log))
                             )
     "#,
-                        ),
-                    },
-                );
+                        ))));
 
                 // Connection 'receive' method.
                 // TODO actually handle the websocket payload here, etc.
-                odb.put_verb(
-                    connection_prototype_oid,
+                odb.set_slot(
+                    sys_oid,
+                    sys_oid,
                     String::from("receive"),
-                    &Method {
-                        method: Bytes::from(
+                    &Value::Program(Program::from(String::from(
                             r#"(module
                             (import "host" "log" (func $host/log (param i32)))
                             (memory $mem 1)
@@ -224,41 +169,10 @@ impl<'world_lifetime> World for FdbWorld<'world_lifetime> {
                             (export "invoke" (func $log))
                             )
     "#,
-                        ),
-                    },
-                );
+                        ))));
                 Ok(())
             };
             self.fdb_database.run(bootstrap_objects).await?;
-
-            // Just a quick test of some of the functions for now.
-            let read_obj = |tr| async move {
-                let odb = ObjDBTxHandle::new(&tr);
-                let root_obj = odb.get(sys_oid).await;
-                println!("Root Object {:?}", root_obj.unwrap());
-
-                if let Ok(p) = odb.get_properties(sys_oid) {
-                    let c = p.collect::<Vec<PropDef>>().await;
-                    println!("Properties: {:?}", c);
-                }
-
-                if let Ok(v) = odb.get_verbs(sys_oid) {
-                    let c = v.collect::<Vec<VerbDef>>().await;
-                    println!("Verbs: {:?}", c);
-                }
-
-                let verbval = odb.find_verb(sys_oid, String::from("syslog")).await;
-                println!("Verb: {:?}", verbval);
-                let args = Value::List(vec![]);
-
-                self.vm
-                    .execute_method(&verbval.unwrap(), self, &args)
-                    .await
-                    .expect("Could not execute method");
-
-                Ok(())
-            };
-            self.fdb_database.run(read_obj).await?;
 
             Ok(())
         }

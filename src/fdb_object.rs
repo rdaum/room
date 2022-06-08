@@ -10,12 +10,12 @@ use fdb::{
 };
 use futures::future::{BoxFuture, FutureExt};
 use int_enum::IntEnum;
-use log::{error, info};
+
 use tokio_stream::StreamExt;
 
+
 use crate::object::{
-    Method, ObjDBHandle, ObjGetError, Object, Oid, PropDef, PropGetError, Value, ValueType,
-    VerbDef, VerbGetError,
+    ObjDBHandle, Oid, SlotDef, SlotGetError, Value, ValueType,
 };
 
 pub trait RangeKey {
@@ -44,54 +44,30 @@ impl From<Oid> for fdb::Key {
     }
 }
 
-impl From<PropDef> for fdb::Key {
-    fn from(propdef: PropDef) -> Self {
-        let propdef_subspace = Subspace::new(Bytes::from_static("PROPDEF".as_bytes()));
+impl From<SlotDef> for fdb::Key {
+    fn from(slotdef: SlotDef) -> Self {
+        let slotdef_subspace = Subspace::new(Bytes::from_static("SLOT".as_bytes()));
         let mut tup = Tuple::new();
-        tup.add_uuid(propdef.location.id);
-        tup.add_uuid(propdef.definer.id);
-        tup.add_string(propdef.name);
-        propdef_subspace.subspace(&tup).pack().into()
+        tup.add_uuid(slotdef.location.id);
+        tup.add_uuid(slotdef.key.id);
+        tup.add_string(slotdef.name);
+        slotdef_subspace.subspace(&tup).pack().into()
     }
 }
 
-impl From<fdb::Key> for PropDef {
+impl From<fdb::Key> for SlotDef {
     fn from(key: fdb::Key) -> Self {
-        let propdef_subspace = Subspace::new(Bytes::from_static("PROPDEF".as_bytes()));
+        let slotdef_subspace = Subspace::new(Bytes::from_static("SLOT".as_bytes()));
         let bytes: Bytes = key.into();
-        let tuple = propdef_subspace.unpack(&bytes).unwrap();
-        PropDef {
+        let tuple = slotdef_subspace.unpack(&bytes).unwrap();
+        SlotDef {
             location: Oid {
                 id: *tuple.get_uuid_ref(0).unwrap(),
             },
-            definer: Oid {
+            key: Oid {
                 id: *tuple.get_uuid_ref(1).unwrap(),
             },
             name: tuple.get_string_ref(2).unwrap().clone(),
-        }
-    }
-}
-
-impl From<VerbDef> for fdb::Key {
-    fn from(vd: VerbDef) -> Self {
-        let verbdef_subspace = Subspace::new(Bytes::from_static("VERBDEF".as_bytes()));
-        let mut tup = Tuple::new();
-        tup.add_uuid(vd.definer.id);
-        tup.add_string(vd.name);
-        verbdef_subspace.subspace(&tup).pack().into()
-    }
-}
-
-impl From<fdb::Key> for VerbDef {
-    fn from(key: fdb::Key) -> Self {
-        let verbdef_subspace = Subspace::new(Bytes::from_static("VERBDEF".as_bytes()));
-        let bytes: Bytes = key.into();
-        let tuple = verbdef_subspace.unpack(&bytes).unwrap();
-        VerbDef {
-            definer: Oid {
-                id: *tuple.get_uuid_ref(0).unwrap(),
-            },
-            name: tuple.get_string_ref(1).unwrap().clone(),
         }
     }
 }
@@ -103,19 +79,38 @@ impl From<&Tuple> for Value {
 
         let tval = ValueType::from_int(type_val_idx).unwrap();
         match tval {
+            ValueType::I32 => {
+                let num = tuple.get_i32(2).unwrap();
+                Value::I32(num)
+            }
+            ValueType::I64 => {
+                let num = tuple.get_i64(2).unwrap();
+                Value::I64(num)
+            }
+            ValueType::F32 => {
+                let num = tuple.get_f32(2).unwrap();
+                Value::F32(num)
+            }
+            ValueType::F64 => {
+                let num = tuple.get_f64(2).unwrap();
+                Value::F64(num)
+            }
+            ValueType::V128 => {
+                let b = tuple.get_bytes_ref(2).unwrap();
+                // this feels wrong
+                let c = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+                    b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]];
+                Value::V128(u128::from_be_bytes(c))
+            }
             ValueType::String => {
                 let str = tuple.get_string_ref(2).unwrap();
                 Value::String(str.clone())
             }
-            ValueType::Number => {
-                let num = tuple.get_f64(2).unwrap();
-                Value::Number(num)
-            }
-            ValueType::Obj => {
+            ValueType::IdKey => {
                 let oid = tuple.get_uuid_ref(2).unwrap();
-                Value::Obj(Oid { id: *oid })
+                Value::IdKey(Oid { id: *oid })
             }
-            ValueType::List => {
+            ValueType::Vector => {
                 let size: usize = tuple.get_i32(2).unwrap() as usize;
                 let mut l_val: Vec<Value> = vec![];
                 for n in 0..size {
@@ -123,11 +118,15 @@ impl From<&Tuple> for Value {
                     let v: Value = t.into();
                     l_val.push(v);
                 }
-                Value::List(l_val)
+                Value::Vector(l_val)
             }
             ValueType::Binary => {
                 let bytes = tuple.get_bytes_ref(2).unwrap();
                 Value::Binary(bytes.to_vec())
+            }
+            ValueType::Program => {
+                let bytes = tuple.get_bytes_ref(2).unwrap();
+                Value::Program(bytes.to_vec())
             }
         }
     }
@@ -145,20 +144,37 @@ impl From<&Value> for Tuple {
         let mut tup = Tuple::new();
         tup.add_string(String::from("VALUE"));
         match &value {
+            Value::I32(v) => {
+                tup.add_i8(ValueType::I32 as i8);
+                tup.add_i32(*v);
+            }
+            Value::I64(v) => {
+                tup.add_i8(ValueType::I64 as i8);
+                tup.add_i64(*v);
+            }
+            Value::F32(v) => {
+                tup.add_i8(ValueType::F32 as i8);
+                tup.add_f32(*v);
+            }
+            Value::F64(v) => {
+                tup.add_i8(ValueType::F64 as i8);
+                tup.add_f64(*v);
+            }
+            Value::V128(v) => {
+                tup.add_i8(ValueType::V128 as i8);
+                let be_bytes = Bytes::from(v.to_be_bytes().to_vec());
+                tup.add_bytes(be_bytes);
+            }
             Value::String(s) => {
                 tup.add_i8(ValueType::String as i8);
                 tup.add_string(s.clone());
             }
-            Value::Number(n) => {
-                tup.add_i8(ValueType::Number as i8);
-                tup.add_f64(*n);
-            }
-            Value::Obj(u) => {
-                tup.add_i8(ValueType::Obj as i8);
+            Value::IdKey(u) => {
+                tup.add_i8(ValueType::IdKey as i8);
                 tup.add_uuid(u.id);
             }
-            Value::List(v) => {
-                tup.add_i8(ValueType::List as i8);
+            Value::Vector(v) => {
+                tup.add_i8(ValueType::Vector as i8);
                 tup.add_i32(v.len() as i32);
                 for i in v {
                     let tuple: Tuple = i.into();
@@ -166,6 +182,11 @@ impl From<&Value> for Tuple {
                 }
             }
             Value::Binary(b) => {
+                tup.add_i8(ValueType::Binary as i8);
+                tup.add_bytes(Bytes::from(b.clone()));
+            }
+            Value::Program(b) => {
+                tup.add_i8(ValueType::Program as i8);
                 tup.add_bytes(Bytes::from(b.clone()));
             }
         }
@@ -177,58 +198,6 @@ impl From<&Value> for fdb::Value {
     fn from(value: &Value) -> Self {
         let tup: Tuple = value.into();
         tup.pack().into()
-    }
-}
-
-impl From<&Method> for fdb::Value {
-    fn from(m: &Method) -> Self {
-        let mut tup = Tuple::new();
-        tup.add_bytes(m.method.clone());
-        tup.pack().into()
-    }
-}
-
-impl From<fdb::Value> for Method {
-    fn from(bytes: fdb::Value) -> Self {
-        let tuple = Tuple::from_bytes(bytes).unwrap();
-        Method {
-            method: tuple.get_bytes_ref(0).unwrap().clone(),
-        }
-    }
-}
-
-impl From<fdb::Value> for Object {
-    fn from(bytes: fdb::Value) -> Self {
-        let object_subspace = Subspace::new(Bytes::from_static("OBJECT".as_bytes()));
-        let tuple = object_subspace.unpack(&bytes.into()).unwrap();
-        let mut obj = Object {
-            oid: Oid {
-                id: *tuple.get_uuid_ref(0).unwrap(),
-            },
-            delegates: vec![],
-        };
-        let mut offset = 1;
-        let num_delegates = tuple.get_i32(offset).unwrap();
-        offset += 1;
-        for _delegate_num in 0..num_delegates {
-            let delegate_id = tuple.get_uuid_ref(offset).unwrap();
-            obj.delegates.push(Oid { id: *delegate_id });
-            offset += 1;
-        }
-        obj
-    }
-}
-
-impl From<&Object> for fdb::Value {
-    fn from(o: &Object) -> Self {
-        let object_subspace = Subspace::new(Bytes::from_static("OBJECT".as_bytes()));
-        let mut tup = Tuple::new();
-        tup.add_uuid(o.oid.id);
-        tup.add_i32(o.delegates.len() as i32);
-        for delegate in o.delegates.iter() {
-            tup.add_uuid(delegate.id);
-        }
-        object_subspace.subspace(&tup).pack().into()
     }
 }
 
@@ -244,154 +213,58 @@ impl<'tx_lifetime> ObjDBTxHandle<'tx_lifetime> {
 }
 
 impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
-    fn put(&self, oid: Oid, obj: &Object) {
-        self.tr.set(oid, obj)
+
+    fn set_slot(&self, location: Oid, definer: Oid, name: String, value: &Value) {
+        let slotdef = SlotDef {
+            location,
+            key: definer,
+            name,
+        };
+        self.tr.set(slotdef, value);
     }
 
-    fn get(&self, oid: Oid) -> BoxFuture<Result<Object, ObjGetError>> {
+    fn get_slot(
+        &self,
+        location: Oid,
+        definer: Oid,
+        name: String,
+    ) -> BoxFuture<Result<Value, SlotGetError>> {
         async move {
-            let result_future = self.tr.get(oid).await;
+            let slotdef = SlotDef {
+                location,
+                key: definer,
+                name,
+            };
+            let result_future = self.tr.get(slotdef).await;
 
             match result_future {
                 Ok(result) => match result {
-                    None => Err(ObjGetError::DoesNotExist()),
+                    None => Err(SlotGetError::DoesNotExist()),
                     Some(r) => Ok(r.into()),
                 },
-                Err(_) => Err(ObjGetError::DbError()),
-            }
-        }
-        .boxed()
-    }
-
-    fn put_verb(&self, definer: Oid, name: String, method: &Method) {
-        let verbdef = VerbDef { definer, name };
-        self.tr.set(verbdef, method);
-    }
-
-    fn get_verb(&self, definer: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>> {
-        async move {
-            let verbdef = VerbDef { definer, name };
-            let result_future = self.tr.get(verbdef).await;
-
-            match result_future {
-                Ok(result) => match result {
-                    None => Err(VerbGetError::DoesNotExist()),
-                    Some(r) => Ok(r.into()),
-                },
-                Err(_) => Err(VerbGetError::DbError()),
-            }
-        }
-        .boxed()
-    }
-
-    fn find_verb(&self, location: Oid, name: String) -> BoxFuture<Result<Method, VerbGetError>> {
-        // Look locally first.
-        async move {
-            let local_look = self.get_verb(location, name.clone()).await;
-
-            match local_look {
-                Ok(r) => Ok(r),
-                Err(e) if e == VerbGetError::DoesNotExist() => {
-                    // Get delegates list.
-                    let o_look = self.get(location).await;
-                    let delegates = match o_look {
-                        Ok(o) => { o.delegates }
-                        Err(e) => match e {
-                            ObjGetError::DbError() => {
-                                error!("Unable to retrieve object to retrieve delegates list due db error: {:?}", e);
-                                return Err(VerbGetError::DbError());
-                            }
-                            ObjGetError::DoesNotExist() => {
-                                error!("Unable to retrieve object to retrieve delegates list due to invalid delegate ({:?}): {:?}", location, e);
-                                vec![]
-                            }
-                        }
-                    };
-
-                    info!("Delegates for obj {:?} == {:?}", location, delegates);
-
-                    // Depth first search up delegate tree.
-                    for delegate in delegates {
-                        match self.find_verb(delegate, name.clone()).await {
-                            Ok(o) => return Ok(o),
-                            Err(e) if e == VerbGetError::DoesNotExist() => continue,
-                            Err(e) => return Err(e),
-                        }
-                    }
-                    Err(VerbGetError::DoesNotExist())
-                }
-
-                Err(e) => Err(e),
+                Err(_) => Err(SlotGetError::DbError()),
             }
         }
             .boxed()
     }
 
-    fn set_property(&self, location: Oid, definer: Oid, name: String, value: &Value) {
-        let propdef = PropDef {
-            location,
-            definer,
-            name,
-        };
-        self.tr.set(propdef, value);
-    }
-
-    fn get_property(
+    fn get_slots(
         &self,
         location: Oid,
-        definer: Oid,
-        name: String,
-    ) -> BoxFuture<Result<Value, PropGetError>> {
-        async move {
-            let propdef = PropDef {
-                location,
-                definer,
-                name,
-            };
-            let result_future = self.tr.get(propdef).await;
-
-            match result_future {
-                Ok(result) => match result {
-                    None => Err(PropGetError::DoesNotExist()),
-                    Some(r) => Ok(r.into()),
-                },
-                Err(_) => Err(PropGetError::DbError()),
-            }
-        }
-        .boxed()
-    }
-
-    fn get_properties(
-        &self,
-        location: Oid,
-    ) -> Result<Box<dyn tokio_stream::Stream<Item = PropDef> + Send + Unpin>, PropGetError> {
-        let propdef_subspace = Subspace::new(Bytes::from_static("PROPDEF".as_bytes()));
+        key: Oid,
+    ) -> Result<Box<dyn tokio_stream::Stream<Item=SlotDef> + Send + Unpin>, SlotGetError> {
+        let slotdef_subspace = Subspace::new(Bytes::from_static("SLOT".as_bytes()));
         let mut tup = Tuple::new();
         tup.add_uuid(location.id);
-        let prop_range = propdef_subspace.range(&tup);
-        let range_stream = prop_range.into_stream(self.tr, RangeOptions::default());
-        let propdefs = range_stream.map(|kv| -> PropDef {
+        tup.add_uuid(key.id);
+        let slot_range = slotdef_subspace.range(&tup);
+        let range_stream = slot_range.into_stream(self.tr, RangeOptions::default());
+        let slotdefs = range_stream.map(|kv| -> SlotDef {
             let key = kv.unwrap().get_key_ref().clone();
 
-            PropDef::from(key)
+            SlotDef::from(key)
         });
-        Ok(Box::new(propdefs))
+        Ok(Box::new(slotdefs))
     }
 
-    fn get_verbs(
-        &self,
-        location: Oid,
-    ) -> Result<Box<dyn tokio_stream::Stream<Item = VerbDef> + Send + Unpin>, VerbGetError> {
-        let verbdef_subspace = Subspace::new(Bytes::from_static("VERBDEF".as_bytes()));
-        let mut tup = Tuple::new();
-        tup.add_uuid(location.id);
-        let verb_range = verbdef_subspace.range(&tup);
-        let range_stream = verb_range.into_stream(self.tr, RangeOptions::default());
-        let verbdefs = range_stream.map(|kv| -> VerbDef {
-            let key = kv.unwrap().get_key_ref().clone();
-
-            VerbDef::from(key)
-        });
-        Ok(Box::new(verbdefs))
-    }
 }

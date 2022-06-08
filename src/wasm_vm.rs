@@ -8,7 +8,7 @@ use serde::Serialize;
 use wasmtime::{self, Extern, Module};
 use wasmtime::Extern::Func;
 
-use crate::{object::Method, object::Value, vm::VM, world::World};
+use crate::{object::Program, object::Value, vm::VM, world::World};
 
 pub struct WasmVM<'vm_lifetime> {
     wasm_engine: wasmtime::Engine,
@@ -16,14 +16,14 @@ pub struct WasmVM<'vm_lifetime> {
 }
 
 impl<'vm_lifetime> VM for WasmVM<'vm_lifetime> {
-    fn execute_method(
+    fn execute(
         &self,
-        method: &Method,
+        method: &Program,
         _world: &(dyn World + Send + Sync),
         args: &Value,
     ) -> BoxFuture<Result<(), anyhow::Error>> {
         // Copy the method program before entering the closure.
-        let bytes = method.method.clone();
+        let bytes = method.clone();
 
         // Messagepack the arguments to pass through.
         let mut args_buf = Vec::new();
