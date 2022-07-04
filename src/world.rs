@@ -18,18 +18,24 @@ use crate::{
     object::{Program, Oid, Value},
     vm::VM,
 };
+use crate::wasm_vm::WasmVM;
 
-type PeerMap = Arc<Mutex<HashMap<Oid, (SocketAddr, UnboundedSender<Message>)>>>;
+type PeerMap = Arc<Mutex<HashMap<Oid, Connection>>>;
 
 // Owns the database and WASM runtime, and hosts methods for accessing the world.
 pub struct World {
-    vm: Box<dyn VM + Send + Sync>,
     fdb_database: FdbDatabase,
     peer_map: PeerMap,
 }
 
+pub struct Connection {
+    address: SocketAddr,
+    sender: UnboundedSender<Message>,
+    vm: Arc<dyn VM + Send + Sync>,
+}
+
 impl World {
-    pub fn new(vm: Box<dyn VM + Send + Sync>) -> Self {
+    pub fn new() -> Self {
         unsafe {
             fdb::select_api_version(710);
             fdb::start_network();
@@ -38,7 +44,6 @@ impl World {
         let fdb_database = fdb::open_database(fdb_cluster_file).expect("Could not open database");
 
         World {
-            vm,
             fdb_database,
             peer_map: Arc::new(Mutex::new(Default::default())),
         }
@@ -55,7 +60,9 @@ pub async fn register_connection(
     world.peer_map
         .lock()
         .unwrap()
-        .insert(new_oid, (address, sender));
+        .insert(new_oid, Connection{
+            address, sender, vm: Arc::new(WasmVM::new().unwrap())
+        });
     Ok(new_oid)
 }
 
@@ -72,7 +79,11 @@ pub async fn disconnect(world: Arc<World>, oid: Oid) -> Result<(), Error> {
 }
 
 pub async fn receive_connection_message(world: &Arc<World>, connection: Oid, message: Bytes) -> Result<(), Error> {
-    let vm = &world.clone().vm;
+    let vm = {
+        let peer_map = world.peer_map.lock().unwrap();
+        let con_record = &peer_map.get(&connection).unwrap();
+        &con_record.vm.clone()
+    };
 
     let m = &message.clone();
     world.fdb_database
@@ -110,8 +121,8 @@ pub async fn receive_connection_message(world: &Arc<World>, connection: Oid, mes
 
 pub async fn send_connection_message(world: Arc<World>, connection: Oid, message: Message) -> Result<(), Error> {
     let peer_map = world.peer_map.lock().unwrap();
-    let (_socket_addr, tx) = &peer_map.get(&connection).unwrap();
-    let mut tx = tx.clone();
+    let connection = &peer_map.get(&connection).unwrap();
+    let mut tx = connection.sender.clone();
     tx.send(message)
         .await
         .expect("Could not send message to connection");

@@ -91,8 +91,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     env_logger::init();
 
-    let vm = Box::from(wasm_vm::WasmVM::new().unwrap());
-    let world = Arc::new(world::World::new(vm));
+    let world = Arc::new(world::World::new());
 
     match initialize_world(world.clone()).await {
         Ok(()) => {

@@ -21,14 +21,13 @@ pub struct WasmVM<'vm_lifetime> {
 struct VMState<'vm_lifetime> {
     wasi: wasmtime_wasi::WasiCtx,
     vm: &'vm_lifetime WasmVM<'vm_lifetime>,
-    world: Arc<World>
 }
 
 impl<'vm_lifetime> VM for WasmVM<'vm_lifetime> {
     fn execute(
         &self,
         method: &Program,
-        world:  Arc<World>,
+        _world:  Arc<World>,
         args: &Value,
     ) -> BoxFuture<Result<(), anyhow::Error>> {
         // Copy the method program before entering the closure.
@@ -45,8 +44,7 @@ impl<'vm_lifetime> VM for WasmVM<'vm_lifetime> {
                     .inherit_stdio()
                     .inherit_args()?
                     .build(),
-                vm: self,
-                world: world.clone()
+                vm: self
             };
             let mut store = wasmtime::Store::new(&self.wasm_engine, state);
 
