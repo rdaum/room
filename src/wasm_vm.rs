@@ -1,11 +1,9 @@
 use std::ops::DerefMut;
 use std::sync::Arc;
 
-use anyhow::Error;
-
+use anyhow::{anyhow, Error};
 use futures::lock::Mutex;
 use log::{error, info};
-
 use rmp_serde::Serializer;
 use serde::Serialize;
 use tungstenite::Message;
@@ -22,6 +20,37 @@ pub struct WasmVM {
 struct VMState {
     wasi: wasmtime_wasi::WasiCtx,
     world: Arc<World>,
+}
+
+fn unpack_args(
+    caller: &mut wasmtime::Caller<VMState>,
+    params: &[wasmtime::Val],
+) -> anyhow::Result<Vec<Value>> {
+    let mem = caller.get_export("memory").unwrap();
+    let stack_end = match &params[0] {
+        Val::I32(p) => *p as usize,
+        _ => {
+            return Err(anyhow!("Invalid stack_end argument"));
+        }
+    };
+    match mem {
+        Extern::Memory(mem) => {
+            let _world = caller.data().world.clone();
+            let mut buffer: Vec<u8> = vec![0; stack_end as usize];
+            mem.read(&caller, 0, &mut buffer).unwrap();
+
+            let arguments: Value = rmp_serde::from_slice(buffer.as_slice()).unwrap();
+            match arguments {
+                Value::Vector(v) => Ok(v),
+                _ => {
+                    return Err(anyhow!("Invalid method arguments"));
+                }
+            }
+        }
+        _ => {
+            return Err(anyhow!("Invalid export for 'memory'"));
+        }
+    }
 }
 
 impl WasmVM {
@@ -54,23 +83,8 @@ impl WasmVM {
             builtin_func_type.clone(),
             |mut caller, params, _results| {
                 Box::new(async move {
-                    let mem = caller.get_export("memory").unwrap();
-                    match mem {
-                        Extern::Func(_) => {}
-                        Extern::Global(_) => {}
-                        Extern::Table(_) => {}
-                        Extern::Memory(mem) => match &params[0] {
-                            Val::I32(param) => {
-                                let stack_end = *param as usize;
-                                let mut buffer: Vec<u8> = vec![0; stack_end as usize];
-                                mem.read(&caller, 0, &mut buffer).unwrap();
-                                let result: Value =
-                                    rmp_serde::from_slice(buffer.as_slice()).unwrap();
-                                info!("Log: {:?}", result);
-                            }
-                            _ => {}
-                        },
-                    }
+                    let arguments = unpack_args(&mut caller, params)?;
+                    info!("Log: {:?}", arguments);
 
                     Ok(())
                 })
@@ -83,63 +97,35 @@ impl WasmVM {
             builtin_func_type,
             |mut caller, params, _results| {
                 Box::new(async move {
-                    let mem = caller.get_export("memory").unwrap();
-                    let stack_end = match &params[0] {
-                        Val::I32(p) => *p as usize,
-                        _ => {
-                            return Err(Trap::new("Invalid arguments"));
-                        }
-                    };
-                    match mem {
-                        Extern::Func(_) => {}
-                        Extern::Global(_) => {}
-                        Extern::Table(_) => {}
-                        Extern::Memory(mem) => {
-                            let world = caller.data().world.clone();
-                            let mut buffer: Vec<u8> = vec![0; stack_end as usize];
-                            mem.read(&caller, 0, &mut buffer).unwrap();
+                    let arguments = unpack_args(&mut caller, params)?;
+                    let (cid, msg) = match &arguments[..] {
+                        [oid, message] => {
+                            let cid = match &oid {
+                                Value::IdKey(oid) => oid,
+                                _ => {
+                                    error!("Invalid 'send' destination: {:?}", oid);
+                                    return Err(Trap::new("Invalid arguments"));
+                                }
+                            };
 
-                            let arguments: Value =
-                                rmp_serde::from_slice(buffer.as_slice()).unwrap();
-
-                            let (cid, msg) = match &arguments {
-                                Value::Vector(args) => match &args[..] {
-                                    [oid, message] => {
-                                        let cid = match &oid {
-                                            Value::IdKey(oid) => oid,
-                                            _ => {
-                                                error!("Invalid 'send' destination: {:?}", oid);
-                                                return Err(Trap::new("Invalid arguments"));
-                                            }
-                                        };
-
-                                        let msg = match message {
-                                            Value::String(str) => Message::Text(str.clone()),
-                                            Value::Binary(bin) => Message::Binary(bin.clone()),
-                                            _ => {
-                                                error!(
-                                                    "Invalid arguments to 'send': {:?}",
-                                                    arguments
-                                                );
-                                                return Err(Trap::new("Invalid arguments"));
-                                            }
-                                        };
-
-                                        (cid, msg)
-                                    }
-                                    _ => {
-                                        error!("Invalid arguments to 'send': {:?}", arguments);
-                                        return Err(Trap::new("Invalid arguments"));
-                                    }
-                                },
+                            let msg = match message {
+                                Value::String(str) => Message::Text(str.clone()),
+                                Value::Binary(bin) => Message::Binary(bin.clone()),
                                 _ => {
                                     error!("Invalid arguments to 'send': {:?}", arguments);
                                     return Err(Trap::new("Invalid arguments"));
                                 }
                             };
-                            send_connection_message(world, *cid, msg).await?;
+
+                            (cid, msg)
                         }
-                    }
+                        _ => {
+                            error!("Invalid arguments to 'send': {:?}", arguments);
+                            return Err(Trap::new("Invalid arguments"));
+                        }
+                    };
+                    let world = caller.data().world.clone();
+                    send_connection_message(world, *cid, msg).await?;
                     Ok(())
                 })
             },
