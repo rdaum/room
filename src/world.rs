@@ -50,6 +50,12 @@ impl World {
     }
 }
 
+impl Default for World {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub async fn register_connection(
     world: Arc<World>,
     sender: UnboundedSender<Message>,
@@ -136,7 +142,7 @@ pub async fn send_verb_dispatch(
     vm: Arc<WasmVM>,
     destoid: Oid,
     method: &str,
-    arguments: &Vec<Value>,
+    arguments: &[Value],
 ) -> Result<(), Error> {
     let vm = &vm.clone();
     world
@@ -145,7 +151,7 @@ pub async fn send_verb_dispatch(
             let odb = ObjDBTxHandle::new(&tr);
             match odb.get_slot(destoid, destoid, String::from(method)).await {
                 Ok(sv) => {
-                    let message_val = Value::Vector(arguments.clone());
+                    let message_val = Value::Vector(arguments.to_vec());
                     match sv {
                         Value::Program(p) => {
                             vm.execute(&p, &message_val)

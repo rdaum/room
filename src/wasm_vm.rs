@@ -1,5 +1,7 @@
+use sha2::{Digest};
 use std::ops::DerefMut;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, Error};
 use futures::executor::block_on;
@@ -16,6 +18,7 @@ use crate::{object::Program, object::Value};
 pub struct WasmVM {
     wasm_linker: Arc<Mutex<wasmtime::Linker<VMState>>>,
     wasm_store: Arc<Mutex<wasmtime::Store<VMState>>>,
+    module_cache: moka::future::Cache<Vec<u8>, wasmtime::Module>,
 }
 
 struct VMState {
@@ -108,6 +111,9 @@ impl WasmVM {
         let vm = WasmVM {
             wasm_linker: Arc::new(Mutex::new(linker)),
             wasm_store: Arc::new(Mutex::new(store)),
+            module_cache: moka::future::Cache::builder()
+                .time_to_live(Duration::from_secs(30 * 60))
+                .build(),
         };
         Ok(vm)
     }
@@ -224,15 +230,24 @@ impl WasmVM {
     }
 
     pub async fn execute(&self, method: &Program, args: &Value) -> Result<(), anyhow::Error> {
+        // Check to see if we have a cached copy of the compiled Module for this Program, using
+        // a Sha512 digest of the program text.
+        // (Should probably profile this because perhaps in some cases taking the hash could be
+        // costlier than just compiling.)
+        let digest = sha2::Sha512::digest(method.as_slice());
+        let module = self
+            .module_cache
+            .get_with(digest.to_vec(), async move {
+                let store = self.wasm_store.lock().await;
+
+                Module::new(store.engine(), method).expect("Not able to produce WASM module")
+            })
+            .await;
+
         // We'll be holding a lock on the actual 'store' throughout execution.
         // This defacto enforces single-threaded single file access per connection
         // But I think this is ok for our purposes.
         let mut store = self.wasm_store.lock().await;
-
-        let bytes = method.clone();
-
-        // Compile the module.
-        let module = Module::new(store.engine(), bytes).expect("Not able to produce WASM module");
 
         // Use the linker to produce an instance from the module.
         let instance = {
