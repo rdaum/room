@@ -12,7 +12,7 @@ use serde::Serialize;
 use tungstenite::Message;
 use wasmtime::{self, Extern, Module, Trap, Val};
 
-use crate::world::{send_connection_message, send_verb_dispatch, World};
+use crate::world::{get_slot, send_connection_message, send_verb_dispatch, World};
 use crate::{object::Program, object::Value};
 
 pub struct WasmVM {
@@ -202,14 +202,12 @@ impl WasmVM {
                             return Err(Trap::new("Invalid arguments"));
                         }
                     };
-                    // How to dispatch... hmph.
                     let world = caller.data().world.clone();
+                    let return_value =
+                        send_verb_dispatch(&world.clone(), vm, *dest_oid, verb.as_str(), arguments)
+                            .await?;
 
-                    // TODO results...
-                    send_verb_dispatch(&world.clone(), vm, *dest_oid, verb.as_str(), arguments)
-                        .await?;
-
-                    let results_size = pack_result(&mut caller, stack_end, &Value::I32(0)).unwrap();
+                    let results_size = pack_result(&mut caller, stack_end, &return_value).unwrap();
                     results[0] = Val::I32(stack_end as i32);
                     results[1] = Val::I32(results_size as i32);
                     Ok(())
@@ -234,6 +232,51 @@ impl WasmVM {
             },
         )?;
 
+        linker.func_new_async(
+            "host",
+            "get_slot",
+            builtin_func_type.clone(),
+            |mut caller, params, results| {
+                Box::new(async move {
+                    let (arguments, stack_end) = unpack_args(&mut caller, params)?;
+
+                    let (oid, key, slot_name) = match &arguments[..] {
+                        [oid, key, slot_name] => {
+                            let oid = match oid {
+                                Value::IdKey(id) => id,
+                                _ => {
+                                    return Err(Trap::new("Invalid destination"));
+                                }
+                            };
+                            let key = match key {
+                                Value::IdKey(id) => id,
+                                _ => {
+                                    return Err(Trap::new("Invalid key"));
+                                }
+                            };
+                            let slot_name = match slot_name {
+                                Value::String(str) => str,
+                                _ => {
+                                    return Err(Trap::new("Invalid verb"));
+                                }
+                            };
+                            (oid, key, slot_name)
+                        }
+                        _ => {
+                            error!("Invalid 'get_slot' arguments");
+                            return Err(Trap::new("Invalid arguments"));
+                        }
+                    };
+                    let world = caller.data().world.clone();
+                    let _return_value = get_slot(&world, *oid, *key, slot_name).await?;
+
+                    let results_size = pack_result(&mut caller, stack_end, &Value::I32(0)).unwrap();
+                    results[0] = Val::I32(stack_end as i32);
+                    results[1] = Val::I32(results_size as i32);
+                    Ok(())
+                })
+            },
+        )?;
         linker.func_new_async(
             "host",
             "send",

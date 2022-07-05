@@ -138,6 +138,26 @@ pub async fn receive_connection_message(
     Ok(())
 }
 
+pub async fn get_slot(
+    world: &Arc<World>,
+    oid: Oid,
+    key: Oid,
+    slot_name: &str,
+) -> Result<Value, Error> {
+    let v = world
+        .fdb_database
+        .run(|tr| async move {
+            let odb = ObjDBTxHandle::new(&tr);
+            match odb.get_slot(oid, key, String::from(slot_name)).await {
+                Ok(slot) => Ok(slot),
+                Err(_err) => Ok(Value::Error(SlotDoesNotExist)),
+            }
+        })
+        .await?;
+
+    Ok(v)
+}
+
 pub async fn send_verb_dispatch(
     world: &Arc<World>,
     vm: Arc<WasmVM>,
