@@ -2,7 +2,15 @@ use futures::future::BoxFuture;
 use int_enum::IntEnum;
 use serde::{Deserialize, Serialize};
 
-// An Oid is a mapping from a 128-bit V4 UUID to an OTuple.
+/// An "object" is purely a bag of "slots". It does not necessarily represent an 'object' in the
+/// same terminology as an object-oriented programming language, but rather just a collection of
+/// attributes.
+/// That is, an object has no inheritance, no delegation, no class, etc.
+/// Each "slot" is identified by its location, a visibility key, and a string name.
+/// In this manner a generic object model is defined upon which others can be built in the runtime.
+
+// An Oid is 128-bit V4 UUID.
+// Used to identify objects & keys on objects.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Oid {
     pub id: uuid::Uuid,
@@ -76,9 +84,9 @@ pub trait ObjDBHandle {
         name: String,
     ) -> BoxFuture<Result<Value, SlotGetError>>;
 
-    /// Find all slots defined on an object
+    /// Find all slots defined for an object
     ///
-    /// * `location` what object to get the sloterties from
+    /// * `location` what object to get the slot from
     fn get_slots(
         &self,
         location: Oid,
