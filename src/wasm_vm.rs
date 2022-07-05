@@ -12,7 +12,7 @@ use serde::Serialize;
 use tungstenite::Message;
 use wasmtime::{self, Extern, Module, Trap, Val};
 
-use crate::world::{get_slot, set_slot, send_connection_message, send_verb_dispatch, World};
+use crate::world::{get_slot, send_connection_message, send_verb_dispatch, set_slot, World};
 use crate::{object::Program, object::Value};
 
 pub struct WasmVM {
@@ -314,7 +314,7 @@ impl WasmVM {
                         }
                     };
                     let world = caller.data().world.clone();
-                    set_slot(&world, *oid, *key, slot_name, &value).await?;
+                    set_slot(&world, *oid, *key, slot_name, value).await?;
 
                     let results_size = pack_result(&mut caller, stack_end, &Value::I32(0)).unwrap();
                     results[0] = Val::I32(stack_end as i32);

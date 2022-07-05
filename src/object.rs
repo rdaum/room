@@ -17,7 +17,7 @@ pub struct Oid {
 }
 
 /// The definition of a slot on an object.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct SlotDef {
     pub location: Oid,
     pub key: Oid,
@@ -88,9 +88,17 @@ pub trait ObjDBHandle {
     /// Find all slots defined for an object
     ///
     /// * `location` what object to get the slot from
+    /// * 'key' key visibilty mask
     fn get_slots(
         &self,
         location: Oid,
         key: Oid,
     ) -> Result<Box<dyn tokio_stream::Stream<Item = SlotDef> + Send + Unpin>, Error>;
+}
+
+pub trait AdminHandle {
+    fn dump_slots(
+        &self,
+        location: Oid,
+    ) -> Result<Box<dyn tokio_stream::Stream<Item = (SlotDef, Value)> + Send + Unpin>, Error>;
 }

@@ -9,17 +9,20 @@ use anyhow::Error;
 use bytes::Bytes;
 use fdb::{database::FdbDatabase, transaction::Transaction};
 use futures::{channel::mpsc::UnboundedSender, SinkExt};
-use log::error;
+use log::{error, info};
 use tungstenite::Message;
 use uuid::Uuid;
 
 use crate::object::Error::{InvalidProgram, NoError, SlotDoesNotExist};
-use crate::object::ObjDBHandle;
+use crate::object::{AdminHandle, ObjDBHandle, SlotDef};
 use crate::wasm_vm::WasmVM;
 use crate::{
     fdb_object::ObjDBTxHandle,
     object::{Oid, Program, Value},
 };
+use rmp_serde::Serializer;
+use serde::{Deserialize, Serialize};
+use tokio_stream::StreamExt;
 
 type PeerMap = Arc<Mutex<HashMap<Oid, Connection>>>;
 
@@ -231,6 +234,82 @@ pub async fn send_connection_message(
     Ok(())
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct Dump {
+    slot_def: SlotDef,
+    value: Value,
+}
+
+/// Iterate a directory loading values into slots.
+/// Each file contains a MessagePack serialization of:
+/// A header defining the slot
+/// The value defining the slot contents
+pub async fn load(world: Arc<World>, slot_path: &std::path::Path) -> Result<(), Error> {
+    assert!(slot_path.is_dir());
+
+    for entry in std::fs::read_dir(slot_path)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_dir() {
+            let payload = std::fs::read(&path)?;
+            let dump_result: Result<Dump, rmp_serde::decode::Error> =
+                rmp_serde::from_slice(payload.as_slice());
+            match dump_result {
+                Ok(dump) => {
+                    set_slot(
+                        &world.clone(),
+                        dump.slot_def.location,
+                        dump.slot_def.location,
+                        &dump.slot_def.name,
+                        &dump.value,
+                    )
+                    .await?;
+                }
+                Err(e) => {
+                    info!("File {:?} is not a valid slot dump: {:?}", entry.path(), e);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn save(
+    world: Arc<World>,
+    slot_path: &std::path::Path,
+    oids: &Vec<Oid>,
+) -> Result<(), Error> {
+    assert!(slot_path.is_dir());
+    world.fdb_database.run(|tr| async move {
+        let odb = ObjDBTxHandle::new(&tr);
+        for oid in oids {
+            let slots = odb.dump_slots(*oid).unwrap();
+            let collect = slots.collect::<Vec<(SlotDef, Value)>>();
+            for slot in collect.await {
+                let mut result_buf = Vec::new();
+                let dump = Dump {
+                    slot_def: slot.0.clone(),
+                    value: slot.1.clone()
+                };
+                dump
+                    .serialize(&mut Serializer::new(&mut result_buf))
+                    .unwrap();
+                let pathname = format! {"{:}-{:}.{:}",
+                                        &slot.0.location.id.to_hyphenated().to_string(),
+                                        &slot.0.key.id.to_hyphenated().to_string(),
+                                        &slot.0.name};
+                let path = slot_path.join(std::path::Path::new(pathname.as_str()));
+                info!("Writing slot {:?}", path);
+                std::fs::write(path, result_buf).unwrap();
+            }
+        }
+        Ok(())
+    }).await?;
+
+    Ok(())
+}
+
 pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
     let sys_oid = Oid { id: Uuid::nil() };
 
@@ -254,7 +333,7 @@ pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
             ))),
         );
 
-        // Connection 'receive' method. Just does an 'echo' fornow.
+        // Connection 'receive' method. Just does an 'echo' for now.
         odb.set_slot(
             sys_oid,
             sys_oid,
@@ -274,5 +353,6 @@ pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
     };
     world.fdb_database.run(bootstrap_objects).await?;
 
+    save(world.clone(), std::path::Path::new("dump"), &vec![sys_oid]).await?;
     Ok(())
 }

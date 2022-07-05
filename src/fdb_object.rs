@@ -13,7 +13,7 @@ use int_enum::IntEnum;
 
 use tokio_stream::StreamExt;
 
-use crate::object::{Error, ObjDBHandle, Oid, SlotDef, Value, ValueType};
+use crate::object::{AdminHandle, Error, ObjDBHandle, Oid, SlotDef, Value, ValueType};
 
 pub trait RangeKey {
     fn list_start_key(location: Oid, definer: Oid) -> Tuple;
@@ -269,6 +269,27 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
             let key = kv.unwrap().get_key_ref().clone();
 
             SlotDef::from(key)
+        });
+        Ok(Box::new(slotdefs))
+    }
+}
+
+impl<'tx_lifetime> AdminHandle for ObjDBTxHandle<'tx_lifetime> {
+    fn dump_slots(
+        &self,
+        location: Oid,
+    ) -> Result<Box<dyn tokio_stream::Stream<Item = (SlotDef, Value)> + Send + Unpin>, Error> {
+        let slotdef_subspace = Subspace::new(Bytes::from_static("SLOT".as_bytes()));
+        let mut tup = Tuple::new();
+        tup.add_uuid(location.id);
+        let slot_range = slotdef_subspace.range(&tup);
+        let range_stream = slot_range.into_stream(self.tr, RangeOptions::default());
+        let slotdefs = range_stream.map(|kv| -> (SlotDef, Value) {
+            let kv = kv.unwrap();
+            let key = kv.get_key_ref().clone();
+            let val = kv.get_value_ref().clone();
+
+            (SlotDef::from(key), Value::from(val))
         });
         Ok(Box::new(slotdefs))
     }
