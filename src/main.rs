@@ -13,7 +13,6 @@ pub mod fdb_object;
 pub mod world;
 pub mod object;
 
-pub mod vm;
 pub mod wasm_vm;
 
 #[derive(Parser, Debug)]

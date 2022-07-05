@@ -13,6 +13,8 @@ features = ["serde"]
 [dependencies]
 serde = "1.0.137"
 anyhow = "1.0.57"
+sha2 = "0.10.2"
+moka = {version = "0.8.5", features = ["future"]}
 wasmtime = "0.37.0"
 wasmtime-wasi = "0.37.0"
 futures = "0.3.21"

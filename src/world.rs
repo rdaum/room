@@ -1,23 +1,23 @@
-use crate::object::{ObjDBHandle};
-use anyhow::Error;
-use bytes::Bytes;
-use fdb::{database::FdbDatabase, transaction::Transaction};
-use futures::{channel::mpsc::UnboundedSender, SinkExt};
-use log::error;
 use std::{
     collections::HashMap,
     env,
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
+
+use anyhow::Error;
+use bytes::Bytes;
+use fdb::{database::FdbDatabase, transaction::Transaction};
+use futures::{channel::mpsc::UnboundedSender, SinkExt};
+use log::error;
 use tungstenite::Message;
 use uuid::Uuid;
 
 use crate::{
     fdb_object::ObjDBTxHandle,
-    object::{Program, Oid, Value},
-    vm::VM,
+    object::{Oid, Program, Value},
 };
+use crate::object::ObjDBHandle;
 use crate::wasm_vm::WasmVM;
 
 type PeerMap = Arc<Mutex<HashMap<Oid, Connection>>>;
@@ -31,7 +31,7 @@ pub struct World {
 pub struct Connection {
     address: SocketAddr,
     sender: UnboundedSender<Message>,
-    vm: Arc<dyn VM + Send + Sync>,
+    vm: Arc<WasmVM>,
 }
 
 impl World {
@@ -60,8 +60,10 @@ pub async fn register_connection(
     world.peer_map
         .lock()
         .unwrap()
-        .insert(new_oid, Connection{
-            address, sender, vm: Arc::new(WasmVM::new().unwrap())
+        .insert(new_oid, Connection {
+            address,
+            sender,
+            vm: Arc::new(WasmVM::new(world.clone()).unwrap()),
         });
     Ok(new_oid)
 }
@@ -98,7 +100,7 @@ pub async fn receive_connection_message(world: &Arc<World>, connection: Oid, mes
                     match sv {
                         Value::Program(p) => {
                             vm
-                                .execute(&p, world.clone(), &message_val)
+                                .execute(&p, &message_val)
                                 .await
                                 .expect("Couldn't invoke receive method");
                         }
@@ -119,10 +121,12 @@ pub async fn receive_connection_message(world: &Arc<World>, connection: Oid, mes
     Ok(())
 }
 
-pub async fn send_connection_message(world: Arc<World>, connection: Oid, message: Message) -> Result<(), Error> {
-    let peer_map = world.peer_map.lock().unwrap();
-    let connection = &peer_map.get(&connection).unwrap();
-    let mut tx = connection.sender.clone();
+pub async fn send_connection_message(world: Arc<World>, conoid: Oid, message: Message) -> Result<(), Error> {
+    let mut tx = {
+        let peer_map = world.peer_map.lock().unwrap();
+        let connection = &peer_map.get(&conoid).unwrap();
+        connection.sender.clone()
+    };
     tx.send(message)
         .await
         .expect("Could not send message to connection");
@@ -136,7 +140,6 @@ pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
         let odb = ObjDBTxHandle::new(&tr);
 
         // Sys 'log' method.
-        // TODO actually handle proper string arguments etc. here
         odb.set_slot(
             sys_oid,
             sys_oid,
@@ -152,19 +155,18 @@ pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
     "#,
             ))));
 
-        // Connection 'receive' method.
-        // TODO actually handle the websocket payload here, etc.
+        // Connection 'receive' method. Just does an 'echo' fornow.
         odb.set_slot(
             sys_oid,
             sys_oid,
             String::from("receive"),
             &Value::Program(Program::from(String::from(
                 r#"(module
-                            (import "host" "log" (func $host/log (param i32)))
+                            (import "host" "send" (func $host/send (param i32)))
                             (memory $mem 1)
                             (export "memory" (memory $mem))
-                            (func $log (param $0 i32) get_local $0 (call $host/log))
-                            (export "invoke" (func $log))
+                            (func $send (param $0 i32) get_local $0 (call $host/send))
+                            (export "invoke" (func $send))
                             )
     "#,
             ))));
