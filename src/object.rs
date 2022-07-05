@@ -45,10 +45,11 @@ pub type Program = Vec<u8>;
 #[repr(i8)]
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, IntEnum)]
 pub enum Error {
-    SlotDoesNotExist = 0,
-    InvalidProgram = 1,
-    PermissionDenied = 2,
-    InternalError = 3,
+    NoError = 0,
+    SlotDoesNotExist = 1,
+    InvalidProgram = 2,
+    PermissionDenied = 3,
+    InternalError = 4,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

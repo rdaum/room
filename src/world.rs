@@ -13,7 +13,7 @@ use log::error;
 use tungstenite::Message;
 use uuid::Uuid;
 
-use crate::object::Error::{InvalidProgram, SlotDoesNotExist};
+use crate::object::Error::{InvalidProgram, NoError, SlotDoesNotExist};
 use crate::object::ObjDBHandle;
 use crate::wasm_vm::WasmVM;
 use crate::{
@@ -156,6 +156,26 @@ pub async fn get_slot(
         .await?;
 
     Ok(v)
+}
+
+pub async fn set_slot(
+    world: &Arc<World>,
+    oid: Oid,
+    key: Oid,
+    slot_name: &str,
+    value: &Value,
+) -> Result<Value, Error> {
+    world
+        .fdb_database
+        .run(|tr| async move {
+            let odb = ObjDBTxHandle::new(&tr);
+            odb.set_slot(oid, key, String::from(slot_name), value);
+
+            Ok(())
+        })
+        .await?;
+
+    Ok(Value::Error(NoError))
 }
 
 pub async fn send_verb_dispatch(
