@@ -2,6 +2,7 @@ use std::ops::DerefMut;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Error};
+use futures::executor::block_on;
 use futures::lock::Mutex;
 use log::{error, info};
 use rmp_serde::Serializer;
@@ -9,11 +10,11 @@ use serde::Serialize;
 use tungstenite::Message;
 use wasmtime::{self, Extern, Module, Trap, Val};
 
-use crate::world::{send_connection_message, World};
+use crate::world::{send_connection_message, send_verb_dispatch, World};
 use crate::{object::Program, object::Value};
 
 pub struct WasmVM {
-    wasm_linker: Arc<wasmtime::Linker<VMState>>,
+    wasm_linker: Arc<Mutex<wasmtime::Linker<VMState>>>,
     wasm_store: Arc<Mutex<wasmtime::Store<VMState>>>,
 }
 
@@ -66,8 +67,6 @@ impl WasmVM {
 
         wasmtime_wasi::add_to_linker(&mut linker, |state: &mut VMState| &mut state.wasi)?;
 
-        let builtin_func_type = wasmtime::FuncType::new(Some(wasmtime::ValType::I32), None);
-
         let state = VMState {
             wasi: wasmtime_wasi::WasiCtxBuilder::new()
                 .inherit_stdio()
@@ -76,6 +75,77 @@ impl WasmVM {
             world,
         };
         let mut store = wasmtime::Store::new(&engine, state);
+
+        // WebAssembly execution will be paused for an async yield every time it
+        // consumes 10000 fuel. Fuel will be refilled u64::MAX times.
+        store.out_of_fuel_async_yield(u64::MAX, 10000);
+
+        let vm = WasmVM {
+            wasm_linker: Arc::new(Mutex::new(linker)),
+            wasm_store: Arc::new(Mutex::new(store)),
+        };
+        Ok(vm)
+    }
+
+    pub fn bind_builtins(self: Arc<Self>) -> anyhow::Result<(), anyhow::Error> {
+        let builtin_func_type = wasmtime::FuncType::new(Some(wasmtime::ValType::I32), None);
+
+        let mut linker = block_on(self.wasm_linker.lock());
+        let vm = self.clone();
+        linker.func_new_async(
+            "host",
+            "invoke",
+            builtin_func_type.clone(),
+            move |mut caller, params, _results| {
+                let vm = vm.clone();
+
+                Box::new(async move {
+                    let vm = vm.clone();
+
+                    let arguments = unpack_args(&mut caller, params)?;
+                    let (dest_oid, verb, arguments) = match &arguments[..] {
+                        [oid, verb, args] => {
+                            let oid = match oid {
+                                Value::IdKey(id) => id,
+                                _ => {
+                                    return Err(Trap::new("Invalid destination"));
+                                }
+                            };
+                            let verb = match verb {
+                                Value::String(str) => str,
+                                _ => {
+                                    return Err(Trap::new("Invalid verb"));
+                                }
+                            };
+                            let args = match args {
+                                Value::Vector(a) => a,
+                                _ => {
+                                    return Err(Trap::new("Invalid verb arguments"));
+                                }
+                            };
+                            (oid, verb, args)
+                        }
+                        _ => {
+                            error!("Invalid 'invoke' arguments");
+                            return Err(Trap::new("Invalid arguments"));
+                        }
+                    };
+                    // How to dispatch... hmph.
+                    let world = caller.data().world.clone();
+
+                    send_verb_dispatch(
+                        &world.clone(),
+                        vm,
+                        *dest_oid,
+                        verb.as_str(),
+                        arguments,
+                    )
+                    .await?;
+
+                    Ok(())
+                })
+            },
+        )?;
 
         linker.func_new_async(
             "host",
@@ -131,14 +201,7 @@ impl WasmVM {
             },
         )?;
 
-        // WebAssembly execution will be paused for an async yield every time it
-        // consumes 10000 fuel. Fuel will be refilled u64::MAX times.
-        store.out_of_fuel_async_yield(u64::MAX, 10000);
-
-        Ok(WasmVM {
-            wasm_linker: Arc::new(linker),
-            wasm_store: Arc::new(Mutex::new(store)),
-        })
+        Ok(())
     }
 
     pub async fn execute(&self, method: &Program, args: &Value) -> Result<(), anyhow::Error> {
@@ -152,11 +215,14 @@ impl WasmVM {
 
         let mut store = self.wasm_store.lock().await;
         let module = Module::new(store.engine(), bytes).expect("Not able to produce WASM module");
-        let instance = self
-            .wasm_linker
-            .instantiate_async(store.deref_mut(), &module)
-            .await
-            .unwrap();
+
+        let instance = {
+            let linker = self.wasm_linker.lock().await;
+            linker
+                .instantiate_async(store.deref_mut(), &module)
+                .await
+                .unwrap()
+        };
 
         // Fill module's memory offset 0 with the serialized arguments.
         let memory = &instance

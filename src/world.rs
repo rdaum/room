@@ -56,12 +56,14 @@ pub async fn register_connection(
     address: SocketAddr,
 ) -> Result<Oid, Error> {
     let new_oid = Oid { id: Uuid::new_v4() };
+    let vm = Arc::new(WasmVM::new(world.clone()).unwrap());
+    vm.clone().bind_builtins()?;
     world.peer_map.lock().unwrap().insert(
         new_oid,
         Connection {
             address,
             sender,
-            vm: Arc::new(WasmVM::new(world.clone()).unwrap()),
+            vm,
         },
     );
     Ok(new_oid)
@@ -126,6 +128,43 @@ pub async fn receive_connection_message(
         })
         .await
         .expect("Could not receive message");
+    Ok(())
+}
+
+pub async fn send_verb_dispatch(
+    world: &Arc<World>,
+    vm: Arc<WasmVM>,
+    destoid: Oid,
+    method: &str,
+    arguments: &Vec<Value>,
+) -> Result<(), Error> {
+    let vm = &vm.clone();
+    world
+        .fdb_database
+        .run(|tr| async move {
+            let odb = ObjDBTxHandle::new(&tr);
+            match odb.get_slot(destoid, destoid, String::from(method)).await {
+                Ok(sv) => {
+                    let message_val = Value::Vector(arguments.clone());
+                    match sv {
+                        Value::Program(p) => {
+                            vm.execute(&p, &message_val)
+                                .await
+                                .expect("Couldn't invoke receive method");
+                        }
+                        _ => {
+                            error!("slot not a Program: {:?}", message_val)
+                        }
+                    }
+                }
+                Err(r) => {
+                    error!("Verb not found: {:?}", r)
+                }
+            }
+            Ok(())
+        })
+        .await
+        .expect("Could not dispatch verb send");
     Ok(())
 }
 
