@@ -10,19 +10,19 @@ use bytes::Bytes;
 use fdb::{database::FdbDatabase, transaction::Transaction};
 use futures::{channel::mpsc::UnboundedSender, SinkExt};
 use log::{error, info};
+use rmp_serde::Serializer;
+use serde::{Deserialize, Serialize};
+use tokio_stream::StreamExt;
 use tungstenite::Message;
 use uuid::Uuid;
 
-use crate::object::Error::{InvalidProgram, NoError, SlotDoesNotExist};
-use crate::object::{AdminHandle, ObjDBHandle, SlotDef};
-use crate::wasm_vm::WasmVM;
 use crate::{
     fdb_object::ObjDBTxHandle,
     object::{Oid, Program, Value},
 };
-use rmp_serde::Serializer;
-use serde::{Deserialize, Serialize};
-use tokio_stream::StreamExt;
+use crate::object::{AdminHandle, ObjDBHandle, SlotDef};
+use crate::object::Error::{InvalidProgram, NoError, SlotDoesNotExist};
+use crate::wasm_vm::WasmVM;
 
 type PeerMap = Arc<Mutex<HashMap<Oid, Connection>>>;
 
@@ -244,8 +244,10 @@ struct Dump {
 /// Each file contains a MessagePack serialization of:
 /// A header defining the slot
 /// The value defining the slot contents
-pub async fn load(world: Arc<World>, slot_path: &std::path::Path) -> Result<(), Error> {
+pub async fn load(world: Arc<World>, slot_path: &std::path::Path) -> Result<bool, Error> {
     assert!(slot_path.is_dir());
+
+    let mut found = false;
 
     for entry in std::fs::read_dir(slot_path)? {
         let entry = entry?;
@@ -256,6 +258,10 @@ pub async fn load(world: Arc<World>, slot_path: &std::path::Path) -> Result<(), 
                 rmp_serde::from_slice(payload.as_slice());
             match dump_result {
                 Ok(dump) => {
+                    info!("Loading {:}-{:}.{:} from dump",
+                      dump.slot_def.location.id.to_hyphenated().to_string(),
+                                        dump.slot_def.key.id.to_hyphenated().to_string(),
+                                        dump.slot_def.name);
                     set_slot(
                         &world.clone(),
                         dump.slot_def.location,
@@ -263,7 +269,8 @@ pub async fn load(world: Arc<World>, slot_path: &std::path::Path) -> Result<(), 
                         &dump.slot_def.name,
                         &dump.value,
                     )
-                    .await?;
+                        .await?;
+                    found = true;
                 }
                 Err(e) => {
                     info!("File {:?} is not a valid slot dump: {:?}", entry.path(), e);
@@ -272,7 +279,7 @@ pub async fn load(world: Arc<World>, slot_path: &std::path::Path) -> Result<(), 
         }
     }
 
-    Ok(())
+    Ok(found)
 }
 
 pub async fn save(
@@ -290,7 +297,7 @@ pub async fn save(
                 let mut result_buf = Vec::new();
                 let dump = Dump {
                     slot_def: slot.0.clone(),
-                    value: slot.1.clone()
+                    value: slot.1.clone(),
                 };
                 dump
                     .serialize(&mut Serializer::new(&mut result_buf))
@@ -313,16 +320,21 @@ pub async fn save(
 pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
     let sys_oid = Oid { id: Uuid::nil() };
 
-    let bootstrap_objects = |tr| async move {
-        let odb = ObjDBTxHandle::new(&tr);
+    let dump_path = std::path::Path::new("dump");
 
-        // Sys 'log' method.
-        odb.set_slot(
-            sys_oid,
-            sys_oid,
-            String::from("syslog"),
-            &Value::Program(Program::from(String::from(
-                r#"(module
+    let dump_found = load(world.clone(), dump_path).await.unwrap();
+    if !dump_found {
+        info!("No dump found; bootstrapping minimal...");
+        let bootstrap_objects = |tr| async move {
+            let odb = ObjDBTxHandle::new(&tr);
+
+            // Sys 'log' method.
+            odb.set_slot(
+                sys_oid,
+                sys_oid,
+                String::from("syslog"),
+                &Value::Program(Program::from(String::from(
+                    r#"(module
                             (import "host" "log" (func $host/log (param i32) (result i32 i32)))
                             (memory $mem 1)
                             (export "memory" (memory $mem))
@@ -330,16 +342,16 @@ pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
                             (export "invoke" (func $log))
                             )
     "#,
-            ))),
-        );
+                ))),
+            );
 
-        // Connection 'receive' method. Just does an 'echo' for now.
-        odb.set_slot(
-            sys_oid,
-            sys_oid,
-            String::from("receive"),
-            &Value::Program(Program::from(String::from(
-                r#"(module
+            // Connection 'receive' method. Just does an 'echo' for now.
+            odb.set_slot(
+                sys_oid,
+                sys_oid,
+                String::from("receive"),
+                &Value::Program(Program::from(String::from(
+                    r#"(module
                             (import "host" "send" (func $host/send (param i32) (result i32 i32)))
                             (memory $mem 1)
                             (export "memory" (memory $mem))
@@ -347,12 +359,13 @@ pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
                             (export "invoke" (func $send))
                             )
     "#,
-            ))),
-        );
-        Ok(())
-    };
-    world.fdb_database.run(bootstrap_objects).await?;
+                ))),
+            );
+            Ok(())
+        };
+        world.fdb_database.run(bootstrap_objects).await?;
+    }
 
-    save(world.clone(), std::path::Path::new("dump"), &vec![sys_oid]).await?;
+    save(world.clone(), dump_path, &vec![sys_oid]).await?;
     Ok(())
 }
