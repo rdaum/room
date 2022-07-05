@@ -1,13 +1,21 @@
-use crate::world::{disconnect, initialize_world, receive_connection_message, register_connection};
+use std::{error::Error, net::SocketAddr, sync::Arc};
+
 use bytes::Bytes;
 use clap::Parser;
 use futures::{future, pin_mut, StreamExt};
 use futures_channel::mpsc::unbounded;
 use log::*;
-use std::{error::Error, net::SocketAddr, sync::Arc};
 use tokio::net::{TcpListener, TcpStream};
+
 use tokio_tungstenite::accept_async;
 use tungstenite::{Message, Result};
+use uuid::Uuid;
+
+use crate::object::Oid;
+use crate::world::{
+    disconnect, bootstrap_world, load, receive_connection_message, register_connection, save,
+    World,
+};
 
 pub mod fdb_object;
 pub mod object;
@@ -80,27 +88,11 @@ async fn handle_connection(
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let args = Args::parse();
-
-    env_logger::init();
-
-    let world = Arc::new(world::World::new());
-
-    match initialize_world(world.clone()).await {
-        Ok(()) => {
-            info!("World initialized.")
-        }
-        Err(e) => {
-            panic!("Could not initialize world: {:?}", e);
-        }
-    }
-
-    let listener = TcpListener::bind(args.listen_address.clone())
+async fn process(listen_address: String, world: Arc<World>) {
+    let listener = TcpListener::bind(listen_address)
         .await
         .expect("Can't listen");
-    info!("Listening on: {}", args.listen_address.clone());
+
     while let Ok((stream, _)) = listener.accept().await {
         let peer = stream
             .peer_addr()
@@ -109,6 +101,45 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         tokio::spawn(handle_connection(peer, stream, world.clone()));
     }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let args = Args::parse();
+
+    env_logger::init();
+
+    let world = Arc::new(world::World::new());
+    let sys_oid = Oid { id: Uuid::nil() };
+
+    let dump_path = std::path::Path::new("dump");
+    let dump_found = load(world.clone(), dump_path).await.unwrap();
+    if !dump_found {
+        info!("No dump found, bootstrapping...");
+        match bootstrap_world(world.clone(), sys_oid).await {
+            Ok(()) => {
+                info!("World bootstrapped.")
+            }
+            Err(e) => {
+                panic!("Could not bootstrap world: {:?}", e);
+            }
+        }
+    }
+
+    info!("Listening on: {}", args.listen_address.clone());
+    tokio::spawn(process(args.listen_address.clone(), world.clone()));
+
+    match tokio::signal::ctrl_c().await {
+        Ok(()) => {
+            warn!("Shutting down...");
+        }
+        Err(err) => {
+            error!("Unable to listen for shutdown signal: {}", err);
+            // we also shut down in case of error
+        }
+    }
+
+    save(world.clone(), dump_path, &vec![sys_oid]).await?;
 
     Ok(())
 }

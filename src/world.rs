@@ -16,13 +16,13 @@ use tokio_stream::StreamExt;
 use tungstenite::Message;
 use uuid::Uuid;
 
+use crate::object::Error::{InvalidProgram, NoError, SlotDoesNotExist};
+use crate::object::{AdminHandle, ObjDBHandle, SlotDef};
+use crate::wasm_vm::WasmVM;
 use crate::{
     fdb_object::ObjDBTxHandle,
     object::{Oid, Program, Value},
 };
-use crate::object::{AdminHandle, ObjDBHandle, SlotDef};
-use crate::object::Error::{InvalidProgram, NoError, SlotDoesNotExist};
-use crate::wasm_vm::WasmVM;
 
 type PeerMap = Arc<Mutex<HashMap<Oid, Connection>>>;
 
@@ -258,10 +258,12 @@ pub async fn load(world: Arc<World>, slot_path: &std::path::Path) -> Result<bool
                 rmp_serde::from_slice(payload.as_slice());
             match dump_result {
                 Ok(dump) => {
-                    info!("Loading {:}-{:}.{:} from dump",
-                      dump.slot_def.location.id.to_hyphenated().to_string(),
-                                        dump.slot_def.key.id.to_hyphenated().to_string(),
-                                        dump.slot_def.name);
+                    info!(
+                        "Loading {:}-{:}.{:} from dump",
+                        dump.slot_def.location.id.to_hyphenated().to_string(),
+                        dump.slot_def.key.id.to_hyphenated().to_string(),
+                        dump.slot_def.name
+                    );
                     set_slot(
                         &world.clone(),
                         dump.slot_def.location,
@@ -269,7 +271,7 @@ pub async fn load(world: Arc<World>, slot_path: &std::path::Path) -> Result<bool
                         &dump.slot_def.name,
                         &dump.value,
                     )
-                        .await?;
+                    .await?;
                     found = true;
                 }
                 Err(e) => {
@@ -288,53 +290,49 @@ pub async fn save(
     oids: &Vec<Oid>,
 ) -> Result<(), Error> {
     assert!(slot_path.is_dir());
-    world.fdb_database.run(|tr| async move {
-        let odb = ObjDBTxHandle::new(&tr);
-        for oid in oids {
-            let slots = odb.dump_slots(*oid).unwrap();
-            let collect = slots.collect::<Vec<(SlotDef, Value)>>();
-            for slot in collect.await {
-                let mut result_buf = Vec::new();
-                let dump = Dump {
-                    slot_def: slot.0.clone(),
-                    value: slot.1.clone(),
-                };
-                dump
-                    .serialize(&mut Serializer::new(&mut result_buf))
-                    .unwrap();
-                let pathname = format! {"{:}-{:}.{:}",
-                                        &slot.0.location.id.to_hyphenated().to_string(),
-                                        &slot.0.key.id.to_hyphenated().to_string(),
-                                        &slot.0.name};
-                let path = slot_path.join(std::path::Path::new(pathname.as_str()));
-                info!("Writing slot {:?}", path);
-                std::fs::write(path, result_buf).unwrap();
+    world
+        .fdb_database
+        .run(|tr| async move {
+            let odb = ObjDBTxHandle::new(&tr);
+            for oid in oids {
+                let slots = odb.dump_slots(*oid).unwrap();
+                let collect = slots.collect::<Vec<(SlotDef, Value)>>();
+                for slot in collect.await {
+                    let mut result_buf = Vec::new();
+                    let dump = Dump {
+                        slot_def: slot.0.clone(),
+                        value: slot.1.clone(),
+                    };
+                    dump.serialize(&mut Serializer::new(&mut result_buf))
+                        .unwrap();
+                    let pathname = format! {"{:}-{:}.{:}",
+                    &slot.0.location.id.to_hyphenated().to_string(),
+                    &slot.0.key.id.to_hyphenated().to_string(),
+                    &slot.0.name};
+                    let path = slot_path.join(std::path::Path::new(pathname.as_str()));
+                    info!("Writing slot {:?}", path);
+                    std::fs::write(path, result_buf).unwrap();
+                }
             }
-        }
-        Ok(())
-    }).await?;
+            Ok(())
+        })
+        .await?;
 
     Ok(())
 }
 
-pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
-    let sys_oid = Oid { id: Uuid::nil() };
+pub async fn bootstrap_world(world: Arc<World>, sys_oid: Oid) -> Result<(), Error> {
+    info!("No dump found; bootstrapping minimal...");
+    let bootstrap_objects = |tr| async move {
+        let odb = ObjDBTxHandle::new(&tr);
 
-    let dump_path = std::path::Path::new("dump");
-
-    let dump_found = load(world.clone(), dump_path).await.unwrap();
-    if !dump_found {
-        info!("No dump found; bootstrapping minimal...");
-        let bootstrap_objects = |tr| async move {
-            let odb = ObjDBTxHandle::new(&tr);
-
-            // Sys 'log' method.
-            odb.set_slot(
-                sys_oid,
-                sys_oid,
-                String::from("syslog"),
-                &Value::Program(Program::from(String::from(
-                    r#"(module
+        // Sys 'log' method.
+        odb.set_slot(
+            sys_oid,
+            sys_oid,
+            String::from("syslog"),
+            &Value::Program(Program::from(String::from(
+                r#"(module
                             (import "host" "log" (func $host/log (param i32) (result i32 i32)))
                             (memory $mem 1)
                             (export "memory" (memory $mem))
@@ -342,16 +340,16 @@ pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
                             (export "invoke" (func $log))
                             )
     "#,
-                ))),
-            );
+            ))),
+        );
 
-            // Connection 'receive' method. Just does an 'echo' for now.
-            odb.set_slot(
-                sys_oid,
-                sys_oid,
-                String::from("receive"),
-                &Value::Program(Program::from(String::from(
-                    r#"(module
+        // Connection 'receive' method. Just does an 'echo' for now.
+        odb.set_slot(
+            sys_oid,
+            sys_oid,
+            String::from("receive"),
+            &Value::Program(Program::from(String::from(
+                r#"(module
                             (import "host" "send" (func $host/send (param i32) (result i32 i32)))
                             (memory $mem 1)
                             (export "memory" (memory $mem))
@@ -359,13 +357,11 @@ pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
                             (export "invoke" (func $send))
                             )
     "#,
-                ))),
-            );
-            Ok(())
-        };
-        world.fdb_database.run(bootstrap_objects).await?;
-    }
+            ))),
+        );
+        Ok(())
+    };
+    world.fdb_database.run(bootstrap_objects).await?;
 
-    save(world.clone(), dump_path, &vec![sys_oid]).await?;
     Ok(())
 }
