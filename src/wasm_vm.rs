@@ -23,6 +23,31 @@ struct VMState {
     world: Arc<World>,
 }
 
+// Argument 'stack frame' construction.
+// Packs all arguments into the first N bytes of an instance's memory.
+fn pack_args(
+    mut store: &mut wasmtime::Store<VMState>,
+    instance: &wasmtime::Instance,
+    args: &Value,
+) -> usize {
+    // Messagepack the arguments to pass through.
+    let mut args_buf = Vec::new();
+    args.serialize(&mut Serializer::new(&mut args_buf))
+        .expect("Unable to serialize arguments");
+
+    // Fill module's memory offset 0 with the serialized arguments.
+    let memory = instance
+        .get_memory(store.deref_mut(), "memory")
+        .expect("expected memory not found");
+
+    memory
+        .write(store.deref_mut(), 0, args_buf.as_slice())
+        .expect("Could not write argument memory");
+
+    args_buf.len()
+}
+
+// Unpack arguments from a stack frame, used by builtins etc.
 fn unpack_args(
     caller: &mut wasmtime::Caller<VMState>,
     params: &[wasmtime::Val],
@@ -133,14 +158,8 @@ impl WasmVM {
                     // How to dispatch... hmph.
                     let world = caller.data().world.clone();
 
-                    send_verb_dispatch(
-                        &world.clone(),
-                        vm,
-                        *dest_oid,
-                        verb.as_str(),
-                        arguments,
-                    )
-                    .await?;
+                    send_verb_dispatch(&world.clone(), vm, *dest_oid, verb.as_str(), arguments)
+                        .await?;
 
                     Ok(())
                 })
@@ -205,17 +224,17 @@ impl WasmVM {
     }
 
     pub async fn execute(&self, method: &Program, args: &Value) -> Result<(), anyhow::Error> {
-        // Copy the method program before entering the closure.
+        // We'll be holding a lock on the actual 'store' throughout execution.
+        // This defacto enforces single-threaded single file access per connection
+        // But I think this is ok for our purposes.
+        let mut store = self.wasm_store.lock().await;
+
         let bytes = method.clone();
 
-        // Messagepack the arguments to pass through.
-        let mut args_buf = Vec::new();
-        args.serialize(&mut Serializer::new(&mut args_buf))
-            .expect("Unable to serialize arguments");
-
-        let mut store = self.wasm_store.lock().await;
+        // Compile the module.
         let module = Module::new(store.engine(), bytes).expect("Not able to produce WASM module");
 
+        // Use the linker to produce an instance from the module.
         let instance = {
             let linker = self.wasm_linker.lock().await;
             linker
@@ -224,22 +243,16 @@ impl WasmVM {
                 .unwrap()
         };
 
-        // Fill module's memory offset 0 with the serialized arguments.
-        let memory = &instance
-            .get_memory(store.deref_mut(), "memory")
-            .expect("expected memory not found");
+        // Build the 'stack frame'. Pack args into module's memory.
+        let args_len = pack_args(store.deref_mut(), &instance, args);
 
-        memory
-            .write(store.deref_mut(), 0, args_buf.as_slice())
-            .expect("Could not write argument memory");
-
+        // Retrieve the linked function from the instance and call it.
         let verb_func = instance
             .get_typed_func::<i32, (), _>(store.deref_mut(), "invoke")
             .expect("Didn't create typed func");
-
-        // Invocation argument is the length of the arguments in memory.
+        // Invocation argument is the length of the argument buffer in memory.
         verb_func
-            .call_async(store.deref_mut(), args_buf.len() as i32)
+            .call_async(store.deref_mut(), args_len as i32)
             .await?;
 
         Ok(())
