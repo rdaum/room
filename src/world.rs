@@ -203,10 +203,10 @@ pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
             String::from("syslog"),
             &Value::Program(Program::from(String::from(
                 r#"(module
-                            (import "host" "log" (func $host/log (param i32)))
+                            (import "host" "log" (func $host/log (param i32) (result i32 i32)))
                             (memory $mem 1)
                             (export "memory" (memory $mem))
-                            (func $log (param $0 i32) get_local $0 (call $host/log))
+                            (func $log (param $0 i32) (result i32 i32) get_local $0 (call $host/log))
                             (export "invoke" (func $log))
                             )
     "#,
@@ -220,10 +220,10 @@ pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
             String::from("receive"),
             &Value::Program(Program::from(String::from(
                 r#"(module
-                            (import "host" "send" (func $host/send (param i32)))
+                            (import "host" "send" (func $host/send (param i32) (result i32 i32)))
                             (memory $mem 1)
                             (export "memory" (memory $mem))
-                            (func $send (param $0 i32) get_local $0 (call $host/send))
+                            (func $send (param $0 i32) (result i32 i32) get_local $0 (call $host/send))
                             (export "invoke" (func $send))
                             )
     "#,

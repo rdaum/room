@@ -33,7 +33,7 @@ pub enum ValueType {
     F64 = 3,
     V128 = 4,
     String = 5,  // UTF-8 strings
-    IdKey = 6,   // Refs to OTuples
+    IdKey = 6,   // Refs to Objects
     Vector = 7,  // Collections of Values
     Binary = 8,  // Byte arrays
     Program = 9, // WAS code

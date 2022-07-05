@@ -1,5 +1,5 @@
-use sha2::{Digest};
-use std::ops::DerefMut;
+use sha2::Digest;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -50,11 +50,33 @@ fn pack_args(
     args_buf.len()
 }
 
+fn pack_result(
+    mut caller: &mut wasmtime::Caller<VMState>,
+    stack_end: usize,
+    result: &Value,
+) -> Result<usize, Error> {
+    let mut result_buf = Vec::new();
+    result
+        .serialize(&mut Serializer::new(&mut result_buf))
+        .unwrap();
+    let mem = &caller.get_export("memory").unwrap();
+    match mem {
+        Extern::Memory(mem) => {
+            mem.write(caller.deref_mut(), stack_end, result_buf.as_slice())
+                .expect("Could not write result memory");
+            Ok(result_buf.len())
+        }
+        _ => {
+            return Err(anyhow!("Invalid export for 'memory'"));
+        }
+    }
+}
+
 // Unpack arguments from a stack frame, used by builtins etc.
 fn unpack_args(
     caller: &mut wasmtime::Caller<VMState>,
     params: &[wasmtime::Val],
-) -> anyhow::Result<Vec<Value>> {
+) -> anyhow::Result<(Vec<Value>, usize)> {
     let mem = caller.get_export("memory").unwrap();
     let stack_end = match &params[0] {
         Val::I32(p) => *p as usize,
@@ -65,12 +87,12 @@ fn unpack_args(
     match mem {
         Extern::Memory(mem) => {
             let _world = caller.data().world.clone();
-            let mut buffer: Vec<u8> = vec![0; stack_end as usize];
+            let mut buffer: Vec<u8> = vec![0; stack_end];
             mem.read(&caller, 0, &mut buffer).unwrap();
 
             let arguments: Value = rmp_serde::from_slice(buffer.as_slice()).unwrap();
             match arguments {
-                Value::Vector(v) => Ok(v),
+                Value::Vector(v) => Ok((v, stack_end)),
                 _ => {
                     return Err(anyhow!("Invalid method arguments"));
                 }
@@ -119,7 +141,10 @@ impl WasmVM {
     }
 
     pub fn bind_builtins(self: Arc<Self>) -> anyhow::Result<(), anyhow::Error> {
-        let builtin_func_type = wasmtime::FuncType::new(Some(wasmtime::ValType::I32), None);
+        let builtin_func_type = wasmtime::FuncType::new(
+            Some(wasmtime::ValType::I32),
+            vec![wasmtime::ValType::I32, wasmtime::ValType::I32].into_iter(),
+        );
 
         let mut linker = block_on(self.wasm_linker.lock());
         let vm = self.clone();
@@ -127,13 +152,13 @@ impl WasmVM {
             "host",
             "invoke",
             builtin_func_type.clone(),
-            move |mut caller, params, _results| {
+            move |mut caller, params, results| {
                 let vm = vm.clone();
 
                 Box::new(async move {
                     let vm = vm.clone();
 
-                    let arguments = unpack_args(&mut caller, params)?;
+                    let (arguments, stack_end) = unpack_args(&mut caller, params)?;
                     let (dest_oid, verb, arguments) = match &arguments[..] {
                         [oid, verb, args] => {
                             let oid = match oid {
@@ -164,9 +189,13 @@ impl WasmVM {
                     // How to dispatch... hmph.
                     let world = caller.data().world.clone();
 
+                    // TODO results...
                     send_verb_dispatch(&world.clone(), vm, *dest_oid, verb.as_str(), arguments)
                         .await?;
 
+                    let results_size = pack_result(&mut caller, stack_end, &Value::I32(0)).unwrap();
+                    results[0] = Val::I32(stack_end as i32);
+                    results[1] = Val::I32(results_size as i32);
                     Ok(())
                 })
             },
@@ -176,11 +205,14 @@ impl WasmVM {
             "host",
             "log",
             builtin_func_type.clone(),
-            |mut caller, params, _results| {
+            |mut caller, params, results| {
                 Box::new(async move {
-                    let arguments = unpack_args(&mut caller, params)?;
+                    let (arguments, stack_end) = unpack_args(&mut caller, params)?;
                     info!("Log: {:?}", arguments);
 
+                    let results_size = pack_result(&mut caller, stack_end, &Value::I32(0)).unwrap();
+                    results[0] = Val::I32(stack_end as i32);
+                    results[1] = Val::I32(results_size as i32);
                     Ok(())
                 })
             },
@@ -190,9 +222,9 @@ impl WasmVM {
             "host",
             "send",
             builtin_func_type,
-            |mut caller, params, _results| {
+            |mut caller, params, results| {
                 Box::new(async move {
-                    let arguments = unpack_args(&mut caller, params)?;
+                    let (arguments, stack_end) = unpack_args(&mut caller, params)?;
                     let (cid, msg) = match &arguments[..] {
                         [oid, message] => {
                             let cid = match &oid {
@@ -221,6 +253,10 @@ impl WasmVM {
                     };
                     let world = caller.data().world.clone();
                     send_connection_message(world, *cid, msg).await?;
+
+                    let results_size = pack_result(&mut caller, stack_end, &Value::I32(0)).unwrap();
+                    results[0] = Val::I32(stack_end as i32);
+                    results[1] = Val::I32(results_size as i32);
                     Ok(())
                 })
             },
@@ -263,10 +299,11 @@ impl WasmVM {
 
         // Retrieve the linked function from the instance and call it.
         let verb_func = instance
-            .get_typed_func::<i32, (), _>(store.deref_mut(), "invoke")
+            .get_typed_func::<i32, (i32, i32), _>(store.deref_mut(), "invoke")
             .expect("Didn't create typed func");
+
         // Invocation argument is the length of the argument buffer in memory.
-        verb_func
+        let _result = verb_func
             .call_async(store.deref_mut(), args_len as i32)
             .await?;
 
