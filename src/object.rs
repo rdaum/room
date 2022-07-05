@@ -36,10 +36,20 @@ pub enum ValueType {
     IdKey = 6,   // Refs to Objects
     Vector = 7,  // Collections of Values
     Binary = 8,  // Byte arrays
-    Program = 9, // WAS code
+    Program = 9, // WAS code,
+    Error = 10,
 }
 
 pub type Program = Vec<u8>;
+
+#[repr(i8)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, IntEnum)]
+pub enum Error {
+    SlotDoesNotExist = 0,
+    InvalidProgram = 1,
+    PermissionDenied = 2,
+    InternalError = 3,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum Value {
@@ -53,12 +63,7 @@ pub enum Value {
     Binary(Vec<u8>),
     Program(Program),
     IdKey(Oid),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum SlotGetError {
-    DbError(),
-    DoesNotExist(),
+    Error(Error),
 }
 
 /// Associate OIDs with slots.
@@ -77,12 +82,7 @@ pub trait ObjDBHandle {
     /// * `location` what object to get the slot from
     /// * `key` The unique ID which masks visibility on the slot.
     /// * `name` the name of the slot
-    fn get_slot(
-        &self,
-        location: Oid,
-        key: Oid,
-        name: String,
-    ) -> BoxFuture<Result<Value, SlotGetError>>;
+    fn get_slot(&self, location: Oid, key: Oid, name: String) -> BoxFuture<Result<Value, Error>>;
 
     /// Find all slots defined for an object
     ///
@@ -91,5 +91,5 @@ pub trait ObjDBHandle {
         &self,
         location: Oid,
         key: Oid,
-    ) -> Result<Box<dyn tokio_stream::Stream<Item = SlotDef> + Send + Unpin>, SlotGetError>;
+    ) -> Result<Box<dyn tokio_stream::Stream<Item = SlotDef> + Send + Unpin>, Error>;
 }

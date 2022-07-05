@@ -13,6 +13,7 @@ use log::error;
 use tungstenite::Message;
 use uuid::Uuid;
 
+use crate::object::Error::{InvalidProgram, SlotDoesNotExist};
 use crate::object::ObjDBHandle;
 use crate::wasm_vm::WasmVM;
 use crate::{
@@ -143,9 +144,9 @@ pub async fn send_verb_dispatch(
     destoid: Oid,
     method: &str,
     arguments: &[Value],
-) -> Result<(), Error> {
+) -> Result<Value, Error> {
     let vm = &vm.clone();
-    world
+    let v = world
         .fdb_database
         .run(|tr| async move {
             let odb = ObjDBTxHandle::new(&tr);
@@ -153,25 +154,25 @@ pub async fn send_verb_dispatch(
                 Ok(sv) => {
                     let message_val = Value::Vector(arguments.to_vec());
                     match sv {
-                        Value::Program(p) => {
-                            vm.execute(&p, &message_val)
-                                .await
-                                .expect("Couldn't invoke receive method");
-                        }
+                        Value::Program(p) => Ok(vm
+                            .execute(&p, &message_val)
+                            .await
+                            .expect("Couldn't invoke receive method")),
                         _ => {
-                            error!("slot not a Program: {:?}", message_val)
+                            error!("slot not a Program: {:?}", message_val);
+                            Ok(Value::Error(InvalidProgram))
                         }
                     }
                 }
                 Err(r) => {
-                    error!("Verb not found: {:?}", r)
+                    error!("Verb not found: {:?}", r);
+                    Ok(Value::Error(SlotDoesNotExist))
                 }
             }
-            Ok(())
         })
         .await
         .expect("Could not dispatch verb send");
-    Ok(())
+    Ok(v)
 }
 
 pub async fn send_connection_message(

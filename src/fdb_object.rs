@@ -13,7 +13,7 @@ use int_enum::IntEnum;
 
 use tokio_stream::StreamExt;
 
-use crate::object::{ObjDBHandle, Oid, SlotDef, SlotGetError, Value, ValueType};
+use crate::object::{Error, ObjDBHandle, Oid, SlotDef, Value, ValueType};
 
 pub trait RangeKey {
     fn list_start_key(location: Oid, definer: Oid) -> Tuple;
@@ -127,6 +127,10 @@ impl From<&Tuple> for Value {
                 let bytes = tuple.get_bytes_ref(2).unwrap();
                 Value::Program(bytes.to_vec())
             }
+            ValueType::Error => {
+                let num = tuple.get_i8(2).unwrap();
+                Value::Error(Error::from_int(num).unwrap())
+            }
         }
     }
 }
@@ -188,6 +192,10 @@ impl From<&Value> for Tuple {
                 tup.add_i8(ValueType::Program as i8);
                 tup.add_bytes(Bytes::from(b.clone()));
             }
+            Value::Error(err) => {
+                tup.add_i8(ValueType::Error as i8);
+                tup.add_i8(*err as i8);
+            }
         }
         tup
     }
@@ -226,7 +234,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
         location: Oid,
         definer: Oid,
         name: String,
-    ) -> BoxFuture<Result<Value, SlotGetError>> {
+    ) -> BoxFuture<Result<Value, Error>> {
         async move {
             let slotdef = SlotDef {
                 location,
@@ -237,10 +245,10 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
 
             match result_future {
                 Ok(result) => match result {
-                    None => Err(SlotGetError::DoesNotExist()),
+                    None => Err(Error::SlotDoesNotExist),
                     Some(r) => Ok(r.into()),
                 },
-                Err(_) => Err(SlotGetError::DbError()),
+                Err(_) => Err(Error::InternalError),
             }
         }
         .boxed()
@@ -250,7 +258,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
         &self,
         location: Oid,
         key: Oid,
-    ) -> Result<Box<dyn tokio_stream::Stream<Item = SlotDef> + Send + Unpin>, SlotGetError> {
+    ) -> Result<Box<dyn tokio_stream::Stream<Item = SlotDef> + Send + Unpin>, Error> {
         let slotdef_subspace = Subspace::new(Bytes::from_static("SLOT".as_bytes()));
         let mut tup = Tuple::new();
         tup.add_uuid(location.id);

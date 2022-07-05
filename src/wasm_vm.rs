@@ -1,5 +1,5 @@
 use sha2::Digest;
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -102,6 +102,22 @@ fn unpack_args(
             return Err(anyhow!("Invalid export for 'memory'"));
         }
     }
+}
+
+fn unpack_results(
+    mut store: &mut wasmtime::Store<VMState>,
+    instance: &wasmtime::Instance,
+    args_start: usize,
+    args_len: usize,
+) -> Result<Value, Error> {
+    // Fill module's memory offset 0 with the serialized arguments.
+    let memory = instance
+        .get_memory(store.deref_mut(), "memory")
+        .expect("expected memory not found");
+    let mut buffer: Vec<u8> = vec![0; args_len];
+
+    memory.read(store, args_start, &mut buffer).unwrap();
+    Ok(rmp_serde::from_slice(buffer.as_slice()).unwrap())
 }
 
 impl WasmVM {
@@ -265,7 +281,7 @@ impl WasmVM {
         Ok(())
     }
 
-    pub async fn execute(&self, method: &Program, args: &Value) -> Result<(), anyhow::Error> {
+    pub async fn execute(&self, method: &Program, args: &Value) -> Result<Value, anyhow::Error> {
         // Check to see if we have a cached copy of the compiled Module for this Program, using
         // a Sha512 digest of the program text.
         // (Should probably profile this because perhaps in some cases taking the hash could be
@@ -303,10 +319,15 @@ impl WasmVM {
             .expect("Didn't create typed func");
 
         // Invocation argument is the length of the argument buffer in memory.
-        let _result = verb_func
+        let (args_begin, args_size) = verb_func
             .call_async(store.deref_mut(), args_len as i32)
             .await?;
 
-        Ok(())
+        unpack_results(
+            store.deref_mut(),
+            &instance,
+            args_begin as usize,
+            args_size as usize,
+        )
     }
 }
