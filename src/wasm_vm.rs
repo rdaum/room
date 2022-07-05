@@ -1,4 +1,3 @@
-
 use std::ops::DerefMut;
 use std::sync::Arc;
 
@@ -12,9 +11,8 @@ use serde::Serialize;
 use tungstenite::Message;
 use wasmtime::{self, Extern, Module, Trap, Val};
 
-
-use crate::{object::Program, object::Value};
 use crate::world::{send_connection_message, World};
+use crate::{object::Program, object::Value};
 
 pub struct WasmVM {
     wasm_linker: Arc<wasmtime::Linker<VMState>>,
@@ -27,8 +25,7 @@ struct VMState {
 }
 
 impl WasmVM {
-    pub fn new(world: Arc<World>,
-    ) -> Result<Self, Error> {
+    pub fn new(world: Arc<World>) -> Result<Self, Error> {
         let mut config = wasmtime::Config::new();
         // We need this engine's `Store`s to be async, and consume fuel, so
         // that they can co-operatively yield during execution.
@@ -40,10 +37,7 @@ impl WasmVM {
 
         wasmtime_wasi::add_to_linker(&mut linker, |state: &mut VMState| &mut state.wasi)?;
 
-        let builtin_func_type = wasmtime::FuncType::new(
-            Some(wasmtime::ValType::I32),
-            None,
-        );
+        let builtin_func_type = wasmtime::FuncType::new(Some(wasmtime::ValType::I32), None);
 
         let state = VMState {
             wasi: wasmtime_wasi::WasiCtxBuilder::new()
@@ -54,97 +48,102 @@ impl WasmVM {
         };
         let mut store = wasmtime::Store::new(&engine, state);
 
-        linker.func_new_async("host", "log", builtin_func_type.clone(), |mut caller, params,_results| {Box::new( async move {
-            let mem = caller.get_export("memory").unwrap();
-            match mem {
-                Extern::Func(_) => {}
-                Extern::Global(_) => {}
-                Extern::Table(_) => {}
-                Extern::Memory(mem) => {
-                    match &params[0] {
-                        Val::I32(param) => {
-                            let stack_end = *param as usize;
+        linker.func_new_async(
+            "host",
+            "log",
+            builtin_func_type.clone(),
+            |mut caller, params, _results| {
+                Box::new(async move {
+                    let mem = caller.get_export("memory").unwrap();
+                    match mem {
+                        Extern::Func(_) => {}
+                        Extern::Global(_) => {}
+                        Extern::Table(_) => {}
+                        Extern::Memory(mem) => match &params[0] {
+                            Val::I32(param) => {
+                                let stack_end = *param as usize;
+                                let mut buffer: Vec<u8> = vec![0; stack_end as usize];
+                                mem.read(&caller, 0, &mut buffer).unwrap();
+                                let result: Value =
+                                    rmp_serde::from_slice(buffer.as_slice()).unwrap();
+                                info!("Log: {:?}", result);
+                            }
+                            _ => {}
+                        },
+                    }
+
+                    Ok(())
+                })
+            },
+        )?;
+
+        linker.func_new_async(
+            "host",
+            "send",
+            builtin_func_type,
+            |mut caller, params, _results| {
+                Box::new(async move {
+                    let mem = caller.get_export("memory").unwrap();
+                    let stack_end = match &params[0] {
+                        Val::I32(p) => *p as usize,
+                        _ => {
+                            return Err(Trap::new("Invalid arguments"));
+                        }
+                    };
+                    match mem {
+                        Extern::Func(_) => {}
+                        Extern::Global(_) => {}
+                        Extern::Table(_) => {}
+                        Extern::Memory(mem) => {
+                            let world = caller.data().world.clone();
                             let mut buffer: Vec<u8> = vec![0; stack_end as usize];
                             mem.read(&caller, 0, &mut buffer).unwrap();
-                            let result: Value = rmp_serde::from_slice(buffer.as_slice()).unwrap();
-                            info!("Log: {:?}", result);
-                        }
-                        _ => {}
-                    }
-                }
-            }
 
-            Ok(())
-        })})?;
+                            let arguments: Value =
+                                rmp_serde::from_slice(buffer.as_slice()).unwrap();
 
+                            let (cid, msg) = match &arguments {
+                                Value::Vector(args) => match &args[..] {
+                                    [oid, message] => {
+                                        let cid = match &oid {
+                                            Value::IdKey(oid) => oid,
+                                            _ => {
+                                                error!("Invalid 'send' destination: {:?}", oid);
+                                                return Err(Trap::new("Invalid arguments"));
+                                            }
+                                        };
 
-        linker.func_new_async("host", "send", builtin_func_type, |mut caller, params,_results| {Box::new( async move {
-            let mem = caller.get_export("memory").unwrap();
-            let stack_end = match &params[0] {
-                Val::I32(p) => {*p as usize}
-                _ => {
-                    return Err(Trap::new("Invalid arguments"));
-                }
-            };
-            match mem {
-                Extern::Func(_) => {}
-                Extern::Global(_) => {}
-                Extern::Table(_) => {}
-                Extern::Memory(mem) => {
-                    let world = caller.data().world.clone();
-                    let mut buffer: Vec<u8> = vec![0; stack_end as usize];
-                    mem.read(&caller, 0, &mut buffer).unwrap();
+                                        let msg = match message {
+                                            Value::String(str) => Message::Text(str.clone()),
+                                            Value::Binary(bin) => Message::Binary(bin.clone()),
+                                            _ => {
+                                                error!(
+                                                    "Invalid arguments to 'send': {:?}",
+                                                    arguments
+                                                );
+                                                return Err(Trap::new("Invalid arguments"));
+                                            }
+                                        };
 
-                    let arguments: Value = rmp_serde::from_slice(buffer.as_slice()).unwrap();
-
-                    let (cid, msg) = match &arguments {
-                        Value::Vector(args) => {
-
-                            match &args[..] {
-                                [oid, message] => {
-
-                                    let cid = match &oid {
-                                        Value::IdKey(oid) => {
-                                            oid
-                                        }
-                                        _ => {
-                                            error!("Invalid 'send' destination: {:?}", oid);
-                                            return Err(Trap::new("Invalid arguments"));
-                                        }
-                                    };
-
-                                    let msg = match message {
-                                        Value::String(str) => {
-                                            Message::Text(str.clone())
-                                        }
-                                        Value::Binary(bin) => {
-                                            Message::Binary(bin.clone())
-                                        }
-                                        _ => {
-                                            error!("Invalid arguments to 'send': {:?}", arguments);
-                                            return Err(Trap::new("Invalid arguments"));
-                                        }
-                                    };
-
-                                    (cid, msg)
-                                }
+                                        (cid, msg)
+                                    }
+                                    _ => {
+                                        error!("Invalid arguments to 'send': {:?}", arguments);
+                                        return Err(Trap::new("Invalid arguments"));
+                                    }
+                                },
                                 _ => {
                                     error!("Invalid arguments to 'send': {:?}", arguments);
                                     return Err(Trap::new("Invalid arguments"));
                                 }
-                            }
+                            };
+                            send_connection_message(world, *cid, msg).await?;
                         }
-                        _ => {
-                            error!("Invalid arguments to 'send': {:?}", arguments);
-                            return Err(Trap::new("Invalid arguments"));
-                        }
-                    };
-                    send_connection_message(world, *cid, msg).await?;
-                }
-            }
-            Ok(())
-        })})?;
-
+                    }
+                    Ok(())
+                })
+            },
+        )?;
 
         // WebAssembly execution will be paused for an async yield every time it
         // consumes 10000 fuel. Fuel will be refilled u64::MAX times.
@@ -156,11 +155,7 @@ impl WasmVM {
         })
     }
 
-    pub async fn execute(
-        &self,
-        method: &Program,
-        args: &Value,
-    ) -> Result<(), anyhow::Error> {
+    pub async fn execute(&self, method: &Program, args: &Value) -> Result<(), anyhow::Error> {
         // Copy the method program before entering the closure.
         let bytes = method.clone();
 
@@ -186,7 +181,6 @@ impl WasmVM {
             .write(store.deref_mut(), 0, args_buf.as_slice())
             .expect("Could not write argument memory");
 
-
         let verb_func = instance
             .get_typed_func::<i32, (), _>(store.deref_mut(), "invoke")
             .expect("Didn't create typed func");
@@ -199,4 +193,3 @@ impl WasmVM {
         Ok(())
     }
 }
-

@@ -13,10 +13,7 @@ use int_enum::IntEnum;
 
 use tokio_stream::StreamExt;
 
-
-use crate::object::{
-    ObjDBHandle, Oid, SlotDef, SlotGetError, Value, ValueType,
-};
+use crate::object::{ObjDBHandle, Oid, SlotDef, SlotGetError, Value, ValueType};
 
 pub trait RangeKey {
     fn list_start_key(location: Oid, definer: Oid) -> Tuple;
@@ -98,8 +95,10 @@ impl From<&Tuple> for Value {
             ValueType::V128 => {
                 let b = tuple.get_bytes_ref(2).unwrap();
                 // this feels wrong
-                let c = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
-                    b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]];
+                let c = [
+                    b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
+                    b[12], b[13], b[14], b[15],
+                ];
                 Value::V128(u128::from_be_bytes(c))
             }
             ValueType::String => {
@@ -213,7 +212,6 @@ impl<'tx_lifetime> ObjDBTxHandle<'tx_lifetime> {
 }
 
 impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
-
     fn set_slot(&self, location: Oid, definer: Oid, name: String, value: &Value) {
         let slotdef = SlotDef {
             location,
@@ -245,14 +243,14 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
                 Err(_) => Err(SlotGetError::DbError()),
             }
         }
-            .boxed()
+        .boxed()
     }
 
     fn get_slots(
         &self,
         location: Oid,
         key: Oid,
-    ) -> Result<Box<dyn tokio_stream::Stream<Item=SlotDef> + Send + Unpin>, SlotGetError> {
+    ) -> Result<Box<dyn tokio_stream::Stream<Item = SlotDef> + Send + Unpin>, SlotGetError> {
         let slotdef_subspace = Subspace::new(Bytes::from_static("SLOT".as_bytes()));
         let mut tup = Tuple::new();
         tup.add_uuid(location.id);
@@ -266,5 +264,4 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
         });
         Ok(Box::new(slotdefs))
     }
-
 }

@@ -13,12 +13,12 @@ use log::error;
 use tungstenite::Message;
 use uuid::Uuid;
 
+use crate::object::ObjDBHandle;
+use crate::wasm_vm::WasmVM;
 use crate::{
     fdb_object::ObjDBTxHandle,
     object::{Oid, Program, Value},
 };
-use crate::object::ObjDBHandle;
-use crate::wasm_vm::WasmVM;
 
 type PeerMap = Arc<Mutex<HashMap<Oid, Connection>>>;
 
@@ -50,27 +50,27 @@ impl World {
     }
 }
 
-
 pub async fn register_connection(
     world: Arc<World>,
     sender: UnboundedSender<Message>,
     address: SocketAddr,
 ) -> Result<Oid, Error> {
     let new_oid = Oid { id: Uuid::new_v4() };
-    world.peer_map
-        .lock()
-        .unwrap()
-        .insert(new_oid, Connection {
+    world.peer_map.lock().unwrap().insert(
+        new_oid,
+        Connection {
             address,
             sender,
             vm: Arc::new(WasmVM::new(world.clone()).unwrap()),
-        });
+        },
+    );
     Ok(new_oid)
 }
 
 pub async fn disconnect(world: Arc<World>, oid: Oid) -> Result<(), Error> {
     world.peer_map.lock().unwrap().remove(&oid);
-    world.fdb_database
+    world
+        .fdb_database
         .run(|tr| async move {
             tr.clear(oid);
             Ok(())
@@ -80,7 +80,11 @@ pub async fn disconnect(world: Arc<World>, oid: Oid) -> Result<(), Error> {
     Ok(())
 }
 
-pub async fn receive_connection_message(world: &Arc<World>, connection: Oid, message: Bytes) -> Result<(), Error> {
+pub async fn receive_connection_message(
+    world: &Arc<World>,
+    connection: Oid,
+    message: Bytes,
+) -> Result<(), Error> {
     let vm = {
         let peer_map = world.peer_map.lock().unwrap();
         let con_record = &peer_map.get(&connection).unwrap();
@@ -88,19 +92,23 @@ pub async fn receive_connection_message(world: &Arc<World>, connection: Oid, mes
     };
 
     let m = &message.clone();
-    world.fdb_database
+    world
+        .fdb_database
         .run(|tr| async move {
             let odb = ObjDBTxHandle::new(&tr);
             let sys_oid = Oid { id: Uuid::nil() };
-            match odb.get_slot(sys_oid, sys_oid, String::from("receive")).await {
+            match odb
+                .get_slot(sys_oid, sys_oid, String::from("receive"))
+                .await
+            {
                 Ok(sv) => {
                     // Invoke "receive" program with connection obj and message as arguments.
-                    let message_val = Value::Vector(vec![Value::IdKey(connection), Value::Binary(m.to_vec())]);
+                    let message_val =
+                        Value::Vector(vec![Value::IdKey(connection), Value::Binary(m.to_vec())]);
 
                     match sv {
                         Value::Program(p) => {
-                            vm
-                                .execute(&p, &message_val)
+                            vm.execute(&p, &message_val)
                                 .await
                                 .expect("Couldn't invoke receive method");
                         }
@@ -121,7 +129,11 @@ pub async fn receive_connection_message(world: &Arc<World>, connection: Oid, mes
     Ok(())
 }
 
-pub async fn send_connection_message(world: Arc<World>, conoid: Oid, message: Message) -> Result<(), Error> {
+pub async fn send_connection_message(
+    world: Arc<World>,
+    conoid: Oid,
+    message: Message,
+) -> Result<(), Error> {
     let mut tx = {
         let peer_map = world.peer_map.lock().unwrap();
         let connection = &peer_map.get(&conoid).unwrap();
@@ -153,7 +165,8 @@ pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
                             (export "invoke" (func $log))
                             )
     "#,
-            ))));
+            ))),
+        );
 
         // Connection 'receive' method. Just does an 'echo' fornow.
         odb.set_slot(
@@ -169,7 +182,8 @@ pub async fn initialize_world(world: Arc<World>) -> Result<(), Error> {
                             (export "invoke" (func $send))
                             )
     "#,
-            ))));
+            ))),
+        );
         Ok(())
     };
     world.fdb_database.run(bootstrap_objects).await?;

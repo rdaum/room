@@ -1,3 +1,4 @@
+use crate::world::{disconnect, initialize_world, receive_connection_message, register_connection};
 use bytes::Bytes;
 use clap::Parser;
 use futures::{future, pin_mut, StreamExt};
@@ -7,11 +8,10 @@ use std::{error::Error, net::SocketAddr, sync::Arc};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::accept_async;
 use tungstenite::{Message, Result};
-use crate::world::{register_connection, disconnect, initialize_world, receive_connection_message};
 
 pub mod fdb_object;
-pub mod world;
 pub mod object;
+pub mod world;
 
 pub mod wasm_vm;
 
@@ -23,11 +23,7 @@ struct Args {
     listen_address: String,
 }
 
-async fn handle_message(
-    conn_oid: object::Oid,
-    msg: Result<Message>,
-    world:  Arc<world::World>,
-) {
+async fn handle_message(conn_oid: object::Oid, msg: Result<Message>, world: Arc<world::World>) {
     match msg {
         Ok(m) => {
             if m.is_text() || m.is_binary() {
@@ -42,7 +38,7 @@ async fn handle_message(
         Err(e) => match e {
             tungstenite::Error::Protocol(_) | tungstenite::Error::ConnectionClosed => {
                 error!("Closed, deleting {:?}", conn_oid);
-                    disconnect(world, conn_oid)
+                disconnect(world, conn_oid)
                     .await
                     .expect("Unable to destroy connection object");
             }

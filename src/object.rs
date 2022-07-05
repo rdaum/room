@@ -1,5 +1,3 @@
-
-
 use futures::future::BoxFuture;
 use int_enum::IntEnum;
 use serde::{Deserialize, Serialize};
@@ -21,7 +19,7 @@ pub struct SlotDef {
 #[repr(i8)]
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq, IntEnum)]
 pub enum ValueType {
-    I32 = 0,     // Mapping
+    I32 = 0, // Mapping
     I64 = 1,
     F32 = 2,
     F64 = 3,
@@ -58,7 +56,6 @@ pub enum SlotGetError {
 /// Associate OIDs with slots.
 /// Objects are bags of slots.
 pub trait ObjDBHandle {
-
     /// Set a slot on an object
     ///
     /// * `location` what object to set the slot on
@@ -86,5 +83,5 @@ pub trait ObjDBHandle {
         &self,
         location: Oid,
         key: Oid,
-    ) -> Result<Box<dyn tokio_stream::Stream<Item =SlotDef> + Send + Unpin>, SlotGetError>;
+    ) -> Result<Box<dyn tokio_stream::Stream<Item = SlotDef> + Send + Unpin>, SlotGetError>;
 }
