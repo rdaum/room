@@ -1,38 +1,11 @@
-[package]
-name = "room"
-version = "0.1.0"
-edition = "2021"
+# Note this workspace is only really used for IDE (in my case CLion) purposes.
+# Building at the root with cargo build (as opposed to using cargo-make) will
+# build the 'driver' as native (not wasm) code, which is incorrect.
 
-[features]
-default = ["fdb/fdb-7_1"]
+# The correct way to exercise the build for the whole project is via "cargo make"
+[workspace]
 
-[dependencies.uuid]
-version = "0.8.2"
-features = ["serde"]
-
-[dependencies]
-serde = "1.0.137"
-anyhow = "1.0.57"
-sha2 = "0.10.2"
-moka = {version = "0.8.5", features = ["future"]}
-wasmtime = "0.37.0"
-wasmtime-wasi = "0.37.0"
-futures = "0.3.21"
-tokio = { version = "1", features = ["full"] }
-tokio-stream = "0.1.8"
-fdb = "0.3.1"
-bytes =  "1.1.0"
-rand = "0.8.5"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-int-enum = "0.4.0"
-assert-str = "0.1.0"
-tungstenite = "0.17.1"
-tokio-tungstenite = "0.17.1"
-log ="0.4.17"
-env_logger = "0.9.0"
-futures-channel = "0.3.21"
-clap = {version = "3.1.18", features = ["derive"] }
-rmp = "0.8.11"
-rmpv = "1.0.0"
-rmp-serde = "1.1.0"
+members = [
+    "engine",
+    "driver",
+]

@@ -66,9 +66,7 @@ fn pack_result(
                 .expect("Could not write result memory");
             Ok(result_buf.len())
         }
-        _ => {
-            return Err(anyhow!("Invalid export for 'memory'"));
-        }
+        _ => Err(anyhow!("Invalid export for 'memory'")),
     }
 }
 
@@ -93,14 +91,10 @@ fn unpack_args(
             let arguments: Value = rmp_serde::from_slice(buffer.as_slice()).unwrap();
             match arguments {
                 Value::Vector(v) => Ok((v, stack_end)),
-                _ => {
-                    return Err(anyhow!("Invalid method arguments"));
-                }
+                _ => Err(anyhow!("Invalid method arguments")),
             }
         }
-        _ => {
-            return Err(anyhow!("Invalid export for 'memory'"));
-        }
+        _ => Err(anyhow!("Invalid export for 'memory'")),
     }
 }
 

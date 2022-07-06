@@ -13,8 +13,7 @@ use uuid::Uuid;
 
 use crate::object::Oid;
 use crate::world::{
-    disconnect, bootstrap_world, load, receive_connection_message, register_connection, save,
-    World,
+    bootstrap_world, disconnect, load, receive_connection_message, register_connection, save, World,
 };
 
 pub mod fdb_object;

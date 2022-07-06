@@ -43,7 +43,7 @@ pub enum ValueType {
 pub type Program = Vec<u8>;
 
 #[repr(i8)]
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, IntEnum)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, IntEnum)]
 pub enum Error {
     NoError = 0,
     SlotDoesNotExist = 1,
