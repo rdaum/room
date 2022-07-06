@@ -1,10 +1,21 @@
-// Note: This doesn't work yet, symbol mangling isn't right.
-// Just here to exercise the compiler.
+#![no_std]
+#![allow(unused_attributes)]
 
-extern "C" {
-    pub fn host_log(s: &str);
+#[cfg(not(test))]
+use core::panic::PanicInfo;
+
+#[cfg(not(test))]
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    loop {}
 }
 
-pub unsafe fn log(s: &str) {
-    host_log(s);
+#[link(wasm_import_module = "host")]
+extern "C" {
+    fn log(s: &str) -> i32;
+}
+
+#[no_mangle]
+pub fn syslog(s: &str) -> i32 {
+    unsafe { log(s) }
 }

@@ -3,5 +3,6 @@ command = "cargo"
 args = [
     "build",
     "--target",
-    "wasm32-unknown-unknown"
+    "wasm32-unknown-unknown",
+    "--lib"
 ]
