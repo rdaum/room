@@ -1,6 +1,4 @@
-use futures::future::BoxFuture;
-use int_enum::IntEnum;
-use serde::{Deserialize, Serialize};
+use value::{Error, Oid, Value};
 
 /// An "object" is purely a bag of "slots". It does not necessarily represent an 'object' in the
 /// same terminology as an object-oriented programming language, but rather just a collection of
@@ -8,13 +6,8 @@ use serde::{Deserialize, Serialize};
 /// That is, an object has no inheritance, no delegation, no class, etc.
 /// Each "slot" is identified by its location, a visibility key, and a string name.
 /// In this manner a generic object model is defined upon which others can be built in the runtime.
-
-// An Oid is 128-bit V4 UUID.
-// Used to identify objects & keys on objects.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct Oid {
-    pub id: uuid::Uuid,
-}
+use futures::future::BoxFuture;
+use serde::{Deserialize, Serialize};
 
 /// The definition of a slot on an object.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -22,49 +15,6 @@ pub struct SlotDef {
     pub location: Oid,
     pub key: Oid,
     pub name: String,
-}
-
-#[repr(i8)]
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq, IntEnum)]
-pub enum ValueType {
-    I32 = 0, // Mapping
-    I64 = 1,
-    F32 = 2,
-    F64 = 3,
-    V128 = 4,
-    String = 5,  // UTF-8 strings
-    IdKey = 6,   // Refs to Objects
-    Vector = 7,  // Collections of Values
-    Binary = 8,  // Byte arrays
-    Program = 9, // WAS code,
-    Error = 10,
-}
-
-pub type Program = Vec<u8>;
-
-#[repr(i8)]
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, IntEnum)]
-pub enum Error {
-    NoError = 0,
-    SlotDoesNotExist = 1,
-    InvalidProgram = 2,
-    PermissionDenied = 3,
-    InternalError = 4,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum Value {
-    I32(i32),
-    I64(i64),
-    F32(f32),
-    F64(f64),
-    V128(u128),
-    String(String),
-    Vector(Vec<Value>),
-    Binary(Vec<u8>),
-    Program(Program),
-    IdKey(Oid),
-    Error(Error),
 }
 
 /// Associate OIDs with slots.

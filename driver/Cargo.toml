@@ -8,3 +8,6 @@ crate-type = ["cdylib"]
 
 [profile.release]
 lto = true
+
+[dependencies]
+value = { path = "../value", version = "0.1.0"}

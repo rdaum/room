@@ -13,7 +13,7 @@ use tungstenite::Message;
 use wasmtime::{self, Extern, Module, Trap, Val};
 
 use crate::world::{get_slot, send_connection_message, send_verb_dispatch, set_slot, World};
-use crate::{object::Program, object::Value};
+use value::{Program, Value};
 
 pub struct WasmVM {
     wasm_linker: Arc<Mutex<wasmtime::Linker<VMState>>>,

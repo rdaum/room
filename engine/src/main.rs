@@ -10,8 +10,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::accept_async;
 use tungstenite::{Message, Result};
 use uuid::Uuid;
+use value::Oid;
 
-use crate::object::Oid;
 use crate::world::{
     bootstrap_world, disconnect, load, receive_connection_message, register_connection, save, World,
 };
@@ -30,7 +30,7 @@ struct Args {
     listen_address: String,
 }
 
-async fn handle_message(conn_oid: object::Oid, msg: Result<Message>, world: Arc<world::World>) {
+async fn handle_message(conn_oid: Oid, msg: Result<Message>, world: Arc<world::World>) {
     match msg {
         Ok(m) => {
             if m.is_text() || m.is_binary() {

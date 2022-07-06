@@ -13,30 +13,35 @@ use int_enum::IntEnum;
 
 use tokio_stream::StreamExt;
 
-use crate::object::{AdminHandle, Error, ObjDBHandle, Oid, SlotDef, Value, ValueType};
+use crate::object::{AdminHandle, ObjDBHandle, SlotDef};
+use value::{Error, Oid, Value, ValueType};
 
 pub trait RangeKey {
     fn list_start_key(location: Oid, definer: Oid) -> Tuple;
     fn list_end_key(location: Oid, definer: Oid) -> Tuple;
 }
 
-impl From<fdb::Key> for Oid {
+// Wrap some types so we can implement conversion to/from keys traits for it.
+pub struct FdbOid(pub Oid);
+pub struct FdbValue(pub Value);
+
+impl From<fdb::Key> for FdbOid {
     fn from(key: Key) -> Self {
         let oid_subspace = Subspace::new(Bytes::from_static("OID".as_bytes()));
         let bytes: Bytes = key.into();
         assert!(oid_subspace.contains(&bytes));
         let tuple = oid_subspace.unpack(&bytes).unwrap();
-        Oid {
+        FdbOid(Oid {
             id: *tuple.get_uuid_ref(0).unwrap(),
-        }
+        })
     }
 }
 
-impl From<Oid> for fdb::Key {
-    fn from(oid: Oid) -> Self {
+impl From<FdbOid> for fdb::Key {
+    fn from(oid: FdbOid) -> Self {
         let oid_subspace = Subspace::new(Bytes::from_static("OID".as_bytes()));
         let mut tuple = Tuple::new();
-        tuple.add_uuid(oid.id);
+        tuple.add_uuid(oid.0.id);
         oid_subspace.subspace(&tuple).pack().into()
     }
 }
@@ -69,7 +74,7 @@ impl From<fdb::Key> for SlotDef {
     }
 }
 
-impl From<&Tuple> for Value {
+impl From<&Tuple> for FdbValue {
     fn from(tuple: &Tuple) -> Self {
         assert_str_eq!(tuple.get_string_ref(0).unwrap(), String::from("VALUE"));
         let type_val_idx = tuple.get_i8(1).unwrap();
@@ -78,19 +83,19 @@ impl From<&Tuple> for Value {
         match tval {
             ValueType::I32 => {
                 let num = tuple.get_i32(2).unwrap();
-                Value::I32(num)
+                FdbValue(Value::I32(num))
             }
             ValueType::I64 => {
                 let num = tuple.get_i64(2).unwrap();
-                Value::I64(num)
+                FdbValue(Value::I64(num))
             }
             ValueType::F32 => {
                 let num = tuple.get_f32(2).unwrap();
-                Value::F32(num)
+                FdbValue(Value::F32(num))
             }
             ValueType::F64 => {
                 let num = tuple.get_f64(2).unwrap();
-                Value::F64(num)
+                FdbValue(Value::F64(num))
             }
             ValueType::V128 => {
                 let b = tuple.get_bytes_ref(2).unwrap();
@@ -99,51 +104,52 @@ impl From<&Tuple> for Value {
                     b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
                     b[12], b[13], b[14], b[15],
                 ];
-                Value::V128(u128::from_be_bytes(c))
+                FdbValue(Value::V128(u128::from_be_bytes(c)))
             }
             ValueType::String => {
                 let str = tuple.get_string_ref(2).unwrap();
-                Value::String(str.clone())
+                FdbValue(Value::String(str.clone()))
             }
             ValueType::IdKey => {
                 let oid = tuple.get_uuid_ref(2).unwrap();
-                Value::IdKey(Oid { id: *oid })
+                FdbValue(Value::IdKey(Oid { id: *oid }))
             }
             ValueType::Vector => {
                 let size: usize = tuple.get_i32(2).unwrap() as usize;
                 let mut l_val: Vec<Value> = vec![];
                 for n in 0..size {
                     let t = tuple.get_tuple_ref(3_usize + n).unwrap();
-                    let v: Value = t.into();
-                    l_val.push(v);
+                    let v: FdbValue = t.into();
+                    l_val.push(v.0);
                 }
-                Value::Vector(l_val)
+                FdbValue(Value::Vector(l_val))
             }
             ValueType::Binary => {
                 let bytes = tuple.get_bytes_ref(2).unwrap();
-                Value::Binary(bytes.to_vec())
+                FdbValue(Value::Binary(bytes.to_vec()))
             }
             ValueType::Program => {
                 let bytes = tuple.get_bytes_ref(2).unwrap();
-                Value::Program(bytes.to_vec())
+                FdbValue(Value::Program(bytes.to_vec()))
             }
             ValueType::Error => {
                 let num = tuple.get_i8(2).unwrap();
-                Value::Error(Error::from_int(num).unwrap())
+                FdbValue(Value::Error(Error::from_int(num).unwrap()))
             }
         }
     }
 }
 
-impl From<fdb::Value> for Value {
+impl From<fdb::Value> for FdbValue {
     fn from(value: fdb::Value) -> Self {
         let tuple = &Tuple::from_bytes(value).unwrap();
         tuple.into()
     }
 }
 
-impl From<&Value> for Tuple {
-    fn from(value: &Value) -> Self {
+impl From<&FdbValue> for Tuple {
+    fn from(vwrap: &FdbValue) -> Self {
+        let value = &vwrap.0;
         let mut tup = Tuple::new();
         tup.add_string(String::from("VALUE"));
         match &value {
@@ -180,7 +186,7 @@ impl From<&Value> for Tuple {
                 tup.add_i8(ValueType::Vector as i8);
                 tup.add_i32(v.len() as i32);
                 for i in v {
-                    let tuple: Tuple = i.into();
+                    let tuple: Tuple = FdbValue(i.clone()).into();
                     tup.add_tuple(tuple);
                 }
             }
@@ -201,10 +207,22 @@ impl From<&Value> for Tuple {
     }
 }
 
-impl From<&Value> for fdb::Value {
-    fn from(value: &Value) -> Self {
-        let tup: Tuple = value.into();
+impl From<FdbValue> for Tuple {
+    fn from(v: FdbValue) -> Self {
+        v.into()
+    }
+}
+
+impl From<&FdbValue> for fdb::Value {
+    fn from(vwrap: &FdbValue) -> Self {
+        let tup: Tuple = vwrap.into();
         tup.pack().into()
+    }
+}
+
+impl From<FdbValue> for fdb::Value {
+    fn from(vwrap: FdbValue) -> Self {
+        vwrap.into()
     }
 }
 
@@ -226,7 +244,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
             key: definer,
             name,
         };
-        self.tr.set(slotdef, value);
+        self.tr.set(slotdef, FdbValue(value.clone()));
     }
 
     fn get_slot(
@@ -246,7 +264,10 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
             match result_future {
                 Ok(result) => match result {
                     None => Err(Error::SlotDoesNotExist),
-                    Some(r) => Ok(r.into()),
+                    Some(r) => {
+                        let v: FdbValue = r.into();
+                        Ok(v.0)
+                    }
                 },
                 Err(_) => Err(Error::InternalError),
             }
@@ -289,7 +310,7 @@ impl<'tx_lifetime> AdminHandle for ObjDBTxHandle<'tx_lifetime> {
             let key = kv.get_key_ref().clone();
             let val = kv.get_value_ref().clone();
 
-            (SlotDef::from(key), Value::from(val))
+            (SlotDef::from(key), FdbValue::from(val).0)
         });
         Ok(Box::new(slotdefs))
     }

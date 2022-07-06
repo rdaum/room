@@ -16,13 +16,13 @@ use tokio_stream::StreamExt;
 use tungstenite::Message;
 use uuid::Uuid;
 
-use crate::object::Error::{InvalidProgram, NoError, SlotDoesNotExist};
+use crate::fdb_object::ObjDBTxHandle;
 use crate::object::{AdminHandle, ObjDBHandle, SlotDef};
 use crate::wasm_vm::WasmVM;
-use crate::{
-    fdb_object::ObjDBTxHandle,
-    object::{Oid, Program, Value},
-};
+use value::Error::{InvalidProgram, NoError, SlotDoesNotExist};
+
+use crate::fdb_object::FdbOid;
+use value::{Oid, Program, Value};
 
 type PeerMap = Arc<Mutex<HashMap<Oid, Connection>>>;
 
@@ -84,7 +84,7 @@ pub async fn disconnect(world: Arc<World>, oid: Oid) -> Result<(), Error> {
     world
         .fdb_database
         .run(|tr| async move {
-            tr.clear(oid);
+            tr.clear(FdbOid(oid));
             Ok(())
         })
         .await
