@@ -36,7 +36,6 @@ pub enum Error {
     InternalError = 4,
     BadType = 5,
 }
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum Value {
     I32(i32),

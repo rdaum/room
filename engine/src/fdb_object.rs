@@ -220,12 +220,6 @@ impl From<&FdbValue> for fdb::Value {
     }
 }
 
-impl From<FdbValue> for fdb::Value {
-    fn from(vwrap: FdbValue) -> Self {
-        vwrap.into()
-    }
-}
-
 // Performs operations on objects via one transaction.
 pub struct ObjDBTxHandle<'tx_lifetime> {
     tr: &'tx_lifetime FdbTransaction,
@@ -244,7 +238,7 @@ impl<'tx_lifetime> ObjDBHandle for ObjDBTxHandle<'tx_lifetime> {
             key: definer,
             name,
         };
-        self.tr.set(slotdef, FdbValue(value.clone()));
+        self.tr.set(slotdef, &FdbValue(value.clone()));
     }
 
     fn get_slot(

@@ -10,8 +10,8 @@ use bytes::Bytes;
 use fdb::{database::FdbDatabase, transaction::Transaction};
 use futures::{channel::mpsc::UnboundedSender, SinkExt};
 use log::{error, info};
-use rmp_serde::Serializer;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use tokio_stream::StreamExt;
 use tungstenite::Message;
 use uuid::Uuid;
@@ -241,7 +241,7 @@ struct Dump {
 }
 
 /// Iterate a directory loading values into slots.
-/// Each file contains a MessagePack serialization of:
+/// Each file contains a json serialization of:
 /// A header defining the slot
 /// The value defining the slot contents
 pub async fn load(world: Arc<World>, slot_path: &std::path::Path) -> Result<bool, Error> {
@@ -254,8 +254,7 @@ pub async fn load(world: Arc<World>, slot_path: &std::path::Path) -> Result<bool
         let path = entry.path();
         if !path.is_dir() {
             let payload = std::fs::read(&path)?;
-            let dump_result: Result<Dump, rmp_serde::decode::Error> =
-                rmp_serde::from_slice(payload.as_slice());
+            let dump_result: Result<Dump, _> = serde_json::from_slice(payload.as_slice());
             match dump_result {
                 Ok(dump) => {
                     info!(
@@ -298,13 +297,11 @@ pub async fn save(
                 let slots = odb.dump_slots(*oid).unwrap();
                 let collect = slots.collect::<Vec<(SlotDef, Value)>>();
                 for slot in collect.await {
-                    let mut result_buf = Vec::new();
                     let dump = Dump {
                         slot_def: slot.0.clone(),
                         value: slot.1.clone(),
                     };
-                    dump.serialize(&mut Serializer::new(&mut result_buf))
-                        .unwrap();
+                    let result_buf = serde_json::to_vec(&dump).unwrap();
                     let pathname = format! {"{:}-{:}.{:}",
                     &slot.0.location.id.to_hyphenated().to_string(),
                     &slot.0.key.id.to_hyphenated().to_string(),
@@ -322,7 +319,6 @@ pub async fn save(
 }
 
 pub async fn bootstrap_world(world: Arc<World>, sys_oid: Oid) -> Result<(), Error> {
-    info!("No dump found; bootstrapping minimal...");
     let bootstrap_objects = |tr| async move {
         let odb = ObjDBTxHandle::new(&tr);
 

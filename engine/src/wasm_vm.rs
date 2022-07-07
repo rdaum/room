@@ -7,8 +7,8 @@ use anyhow::{anyhow, Error};
 use futures::executor::block_on;
 use futures::lock::Mutex;
 use log::{error, info};
-use rmp_serde::Serializer;
-use serde::Serialize;
+use postcard::{from_bytes, to_allocvec};
+
 use tungstenite::Message;
 use wasmtime::{self, Extern, Module, Trap, Val};
 
@@ -34,9 +34,7 @@ fn pack_args(
     args: &Value,
 ) -> usize {
     // Messagepack the arguments to pass through.
-    let mut args_buf = Vec::new();
-    args.serialize(&mut Serializer::new(&mut args_buf))
-        .expect("Unable to serialize arguments");
+    let args_buf: Vec<u8> = to_allocvec(&args).unwrap();
 
     // Fill module's memory offset 0 with the serialized arguments.
     let memory = instance
@@ -55,10 +53,7 @@ fn pack_result(
     stack_end: usize,
     result: &Value,
 ) -> Result<usize, Error> {
-    let mut result_buf = Vec::new();
-    result
-        .serialize(&mut Serializer::new(&mut result_buf))
-        .unwrap();
+    let result_buf = to_allocvec(&result).unwrap();
     let mem = &caller.get_export("memory").unwrap();
     match mem {
         Extern::Memory(mem) => {
@@ -88,7 +83,7 @@ fn unpack_args(
             let mut buffer: Vec<u8> = vec![0; stack_end];
             mem.read(&caller, 0, &mut buffer).unwrap();
 
-            let arguments: Value = rmp_serde::from_slice(buffer.as_slice()).unwrap();
+            let arguments: Value = from_bytes(buffer.as_slice()).unwrap();
             match arguments {
                 Value::Vector(v) => Ok((v, stack_end)),
                 _ => Err(anyhow!("Invalid method arguments")),
@@ -111,7 +106,8 @@ fn unpack_results(
     let mut buffer: Vec<u8> = vec![0; args_len];
 
     memory.read(store, args_start, &mut buffer).unwrap();
-    Ok(rmp_serde::from_slice(buffer.as_slice()).unwrap())
+    let value: Value = from_bytes(buffer.as_slice())?;
+    Ok(value)
 }
 
 impl WasmVM {

@@ -9,5 +9,16 @@ crate-type = ["cdylib"]
 [profile.release]
 lto = true
 
-[dependencies]
-value = { path = "../value", version = "0.1.0"}
+[dependencies.value]
+path = "../value"
+version = "0.1.0"
+
+[dependencies.serde]
+version = "1.0.137"
+# default features off so we can do no_std
+default-features = false
+
+# a no_std binary serde for serialization between wasm and native land.
+[dependencies.postcard]
+version = "1.0.0"
+features = ["alloc"]
