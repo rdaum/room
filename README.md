@@ -51,5 +51,5 @@ By "modern platform" I mean:
 # To run:
 
  * Install FoundationDB (client and server)
- * cargo make from workspace root
+ * `cargo make build` from workspace root
  * From 'engine'; `FDB_CLUSTER_FILE=/etc/foundationdb/fdb.cluster RUST_LOG=info cargo run`

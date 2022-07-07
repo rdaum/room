@@ -104,7 +104,7 @@ impl From<&Tuple> for FdbValue {
                     b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
                     b[12], b[13], b[14], b[15],
                 ];
-                FdbValue(Value::V128(u128::from_be_bytes(c)))
+                FdbValue(Value::U128(u128::from_be_bytes(c)))
             }
             ValueType::String => {
                 let str = tuple.get_string_ref(2).unwrap();
@@ -169,7 +169,7 @@ impl From<&FdbValue> for Tuple {
                 tup.add_i8(ValueType::F64 as i8);
                 tup.add_f64(*v);
             }
-            Value::V128(v) => {
+            Value::U128(v) => {
                 tup.add_i8(ValueType::V128 as i8);
                 let be_bytes = Bytes::from(v.to_be_bytes().to_vec());
                 tup.add_bytes(be_bytes);

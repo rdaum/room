@@ -7,13 +7,12 @@ use anyhow::{anyhow, Error};
 use futures::executor::block_on;
 use futures::lock::Mutex;
 use log::{error, info};
-use postcard::{from_bytes, to_allocvec};
 
 use tungstenite::Message;
 use wasmtime::{self, Extern, Module, Trap, Val};
 
 use crate::world::{get_slot, send_connection_message, send_verb_dispatch, set_slot, World};
-use value::{Program, Value};
+use value::{append_value, Program, Value};
 
 pub struct WasmVM {
     wasm_linker: Arc<Mutex<wasmtime::Linker<VMState>>>,
@@ -34,8 +33,8 @@ fn pack_args(
     args: &Value,
 ) -> usize {
     // Messagepack the arguments to pass through.
-    let args_buf: Vec<u8> = to_allocvec(&args).unwrap();
-
+    let mut args_buf: Vec<u8> = vec![];
+    append_value(&mut args_buf, args);
     // Fill module's memory offset 0 with the serialized arguments.
     let memory = instance
         .get_memory(store.deref_mut(), "memory")
@@ -53,7 +52,8 @@ fn pack_result(
     stack_end: usize,
     result: &Value,
 ) -> Result<usize, Error> {
-    let result_buf = to_allocvec(&result).unwrap();
+    let mut result_buf: Vec<u8> = vec![];
+    append_value(&mut result_buf, result);
     let mem = &caller.get_export("memory").unwrap();
     match mem {
         Extern::Memory(mem) => {
@@ -82,8 +82,7 @@ fn unpack_args(
             let _world = caller.data().world.clone();
             let mut buffer: Vec<u8> = vec![0; stack_end];
             mem.read(&caller, 0, &mut buffer).unwrap();
-
-            let arguments: Value = from_bytes(buffer.as_slice()).unwrap();
+            let arguments = value::parse_value(&mut buffer.as_slice());
             match arguments {
                 Value::Vector(v) => Ok((v, stack_end)),
                 _ => Err(anyhow!("Invalid method arguments")),
@@ -106,7 +105,7 @@ fn unpack_results(
     let mut buffer: Vec<u8> = vec![0; args_len];
 
     memory.read(store, args_start, &mut buffer).unwrap();
-    let value: Value = from_bytes(buffer.as_slice())?;
+    let value = value::parse_value(&mut buffer.as_slice());
     Ok(value)
 }
 

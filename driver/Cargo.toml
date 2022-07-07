@@ -8,6 +8,12 @@ crate-type = ["cdylib"]
 
 [profile.release]
 lto = true
+opt-level ="z"
+panic = "abort"
+
+[dependencies]
+uuid = { version = "0.8.2", default-features = false }
+int-enum = "0.4.0"
 
 [dependencies.value]
 path = "../value"
@@ -17,8 +23,3 @@ version = "0.1.0"
 version = "1.0.137"
 # default features off so we can do no_std
 default-features = false
-
-# a no_std binary serde for serialization between wasm and native land.
-[dependencies.postcard]
-version = "1.0.0"
-features = ["alloc"]

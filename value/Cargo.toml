@@ -12,7 +12,9 @@ lto = true
 [dependencies]
 int-enum = "0.4.0"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
+bytes = "1.1.0"
 
 [dependencies.uuid]
 version = "0.8.2"
 features = ["serde"]
+

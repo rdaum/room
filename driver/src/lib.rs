@@ -1,6 +1,7 @@
 #![no_std]
 #![allow(unused_attributes)]
-
+#![feature(lang_items)]
+#![feature(core_intrinsics)]
 /// WASM-side ABI / heap memory mgmt
 /// Management of heap-arguments
 //
@@ -10,9 +11,13 @@
 // For now we will proceed using the one provided by alloc::System
 extern crate alloc;
 
-use core::slice::from_raw_parts;
+
+
+use alloc::vec::Vec;
+
+
 use value::Error::NoError;
-use value::Value;
+use value::{append_value, parse_value, Value};
 
 #[link(wasm_import_module = "host")]
 extern "C" {
@@ -37,13 +42,14 @@ where
     F: Fn(&Value) -> Value,
 {
     let value: Value = unsafe {
-        let tramp_args = from_raw_parts(memory, static_end as usize);
-        postcard::from_bytes(tramp_args).unwrap()
+        let tramp_args = Vec::from_raw_parts(memory, static_end as usize, static_end as usize);
+        parse_value(&mut tramp_args.as_slice())
     };
     let result = action(&value);
     unsafe {
-        let tramp_res = postcard::to_allocvec(&result).unwrap();
-        let (offset, size) = (__heap_base, tramp_res.len() as i32);
+        let mut buf: Vec<u8> = Vec::new();
+        append_value(&mut buf, &result);
+        let (offset, size) = (__heap_base, buf.len() as i32);
         let region = memory.offset(offset as isize);
         region.copy_from(region, size as usize);
         (offset, size)
